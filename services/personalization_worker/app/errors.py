@@ -1,0 +1,56 @@
+"""Contract section 3: failureCode / HTTP mapping."""
+
+from __future__ import annotations
+
+
+class WorkerError(Exception):
+    def __init__(self, http_status: int, failure_code: str, message: str) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.failure_code = failure_code
+        self.message = message
+
+    def body(self) -> dict[str, str]:
+        return {"status": "FAILED", "failureCode": self.failure_code, "message": self.message}
+
+
+def invalid_request(message: str) -> WorkerError:
+    return WorkerError(400, "INVALID_REQUEST", message)
+
+
+def unauthorized() -> WorkerError:
+    return WorkerError(401, "UNAUTHORIZED", "Invalid or missing worker secret.")
+
+
+def object_not_found(key: str) -> WorkerError:
+    return WorkerError(404, "OBJECT_NOT_FOUND", f"Object not found: {key}")
+
+
+def image_unreadable() -> WorkerError:
+    return WorkerError(422, "IMAGE_UNREADABLE", "The raw object is not a readable image.")
+
+
+def fingerprint_region_not_found() -> WorkerError:
+    return WorkerError(
+        422, "FINGERPRINT_REGION_NOT_FOUND", "No fingerprint ridge region was found in the image."
+    )
+
+
+def audio_unreadable() -> WorkerError:
+    return WorkerError(422, "AUDIO_UNREADABLE", "The raw object could not be decoded as audio.")
+
+
+def audio_duration_invalid(message: str) -> WorkerError:
+    return WorkerError(422, "AUDIO_DURATION_INVALID", message)
+
+
+def segment_out_of_range(message: str) -> WorkerError:
+    return WorkerError(422, "SEGMENT_OUT_OF_RANGE", message)
+
+
+def storage_unavailable() -> WorkerError:
+    return WorkerError(503, "STORAGE_UNAVAILABLE", "Object storage is unavailable.")
+
+
+def tool_unavailable(tool: str) -> WorkerError:
+    return WorkerError(503, "TOOL_UNAVAILABLE", f"Required tool is unavailable: {tool}")
