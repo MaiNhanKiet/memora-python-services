@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MEMORA - Test UI (dev)</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <h1>MEMORA Test UI <small>chỉ dùng local dev</small></h1>
+  <div id="cfg" class="muted">đang tải cấu hình...</div>
+</header>
+
+<main>
+  <!-- A. Accounts -->
+  <section class="card" id="sec-accounts">
+    <h2>A. Tài khoản</h2>
+    <div class="grid2">
+      <div class="slot" data-slot="customer">
+        <h3>Khách hàng</h3>
+        <input class="email" type="email" placeholder="email" autocomplete="off">
+        <input class="password" type="password" placeholder="mật khẩu" autocomplete="off">
+        <div class="row">
+          <button class="login">Đăng nhập</button>
+          <button class="refresh secondary">Refresh</button>
+          <button class="logout secondary">Xóa token</button>
+        </div>
+        <div class="who muted">chưa đăng nhập</div>
+      </div>
+      <div class="slot" data-slot="staff">
+        <h3>Nhân viên</h3>
+        <input class="email" type="email" placeholder="email" autocomplete="off">
+        <input class="password" type="password" placeholder="mật khẩu" autocomplete="off">
+        <div class="row">
+          <button class="login">Đăng nhập</button>
+          <button class="refresh secondary">Refresh</button>
+          <button class="logout secondary">Xóa token</button>
+        </div>
+        <div class="who muted">chưa đăng nhập</div>
+      </div>
+    </div>
+    <p class="hint">Gọi <code>/api/v1/auth/login</code> qua proxy. Access token nằm trong sessionStorage; refresh cookie được proxy giữ trong bộ nhớ server theo từng tài khoản.</p>
+  </section>
+
+  <!-- B. Orders -->
+  <section class="card" id="sec-orders">
+    <h2>B. Đơn hàng</h2>
+    <div class="row">
+      <button id="orders-load">Tải đơn của tôi (khách hàng)</button>
+      <label>Order ID thủ công <input id="order-id" size="38" placeholder="uuid"></label>
+      <button id="order-use" class="secondary">Dùng</button>
+    </div>
+    <div id="orders-list" class="tablewrap"></div>
+    <h3>Ring item của đơn đã chọn</h3>
+    <div id="order-items" class="tablewrap muted">chưa chọn đơn</div>
+  </section>
+
+  <!-- C. Consent -->
+  <section class="card" id="sec-consent">
+    <h2>C. Consent (khách hàng)</h2>
+    <div class="row">
+      <label>Loại
+        <select id="consent-type">
+          <option>FINGERPRINT_PROCESSING</option>
+          <option>SOUNDWAVE_PROCESSING</option>
+        </select>
+      </label>
+      <label>policyVersion <input id="consent-policy" value="dev-1" size="10"></label>
+    </div>
+    <div class="row">
+      <span>Ring item:</span><span id="consent-items" class="checks muted">(chọn đơn ở mục B)</span>
+      <label>hoặc nhập id (cách nhau dấu phẩy) <input id="consent-items-manual" size="40"></label>
+    </div>
+    <div class="row">
+      <button id="consent-accept">Đồng ý (POST)</button>
+      <button id="consent-list" class="secondary">Danh sách</button>
+    </div>
+    <div id="consent-table" class="tablewrap"></div>
+  </section>
+
+  <!-- D. Capture session -->
+  <section class="card" id="sec-session">
+    <h2>D. Phiên lấy vân tay (nhân viên)</h2>
+    <div class="row">
+      <label>consentId <input id="sess-consent" size="38"></label>
+      <label>deviceCode <input id="sess-device" value="esp32-store-01" size="18"></label>
+      <button id="sess-create">Tạo phiên</button>
+    </div>
+    <div class="row">
+      <label>sessionId <input id="sess-id" size="38"></label>
+      <button id="sess-get" class="secondary">Tải</button>
+      <label class="inline"><input type="checkbox" id="sess-poll" checked> tự cập nhật mỗi 2 s</label>
+    </div>
+    <div class="row">
+      <button id="sess-next">Lần tiếp theo</button>
+      <button id="sess-close" class="danger">Kết thúc không chọn</button>
+    </div>
+    <div id="sess-info" class="muted">chưa có phiên</div>
+    <div id="sess-attempts" class="tablewrap"></div>
+  </section>
+
+  <!-- E. Sources -->
+  <section class="card" id="sec-sources">
+    <h2>E. Nguồn &amp; xử lý (khách hàng)</h2>
+    <div class="row">
+      <button id="src-list">Danh sách nguồn (PERSO-011)</button>
+      <label class="inline"><input type="checkbox" id="src-poll" checked> tự cập nhật tới READY / PROCESSING_FAILED</label>
+    </div>
+    <div id="src-table" class="tablewrap"></div>
+    <p class="hint">Backend chưa có API xem trước; khi READY hãy xem ảnh ở mục G (worker). PERSO-011/012 chưa có trong gateway hiện tại - lỗi 404 là bình thường.</p>
+  </section>
+
+  <!-- F. Soundwave -->
+  <section class="card" id="sec-sound">
+    <h2>F. Soundwave (khách hàng)</h2>
+    <div class="row">
+      <input type="file" id="sw-file" accept="audio/*">
+      <button id="sw-rec" class="secondary">Ghi âm</button>
+      <button id="sw-stop" class="secondary" disabled>Dừng</button>
+      <span id="sw-rec-state" class="muted"></span>
+    </div>
+    <audio id="sw-audio" controls hidden></audio>
+    <div id="sw-meta" class="muted">chưa chọn file</div>
+    <div class="row">
+      <label class="grow">Đoạn bắt đầu: <span id="sw-start-label">0</span> ms (cửa sổ 3000 ms)
+        <input type="range" id="sw-start" min="0" max="0" step="50" value="0" disabled></label>
+    </div>
+    <label>Body initiate (chỉnh được; hợp đồng PERSO-009 chưa chốt)
+      <textarea id="sw-body" rows="7" spellcheck="false"></textarea></label>
+    <div class="row">
+      <button id="sw-init">1. Initiate</button>
+      <button id="sw-put" class="secondary" disabled>2. PUT lên Garage</button>
+      <button id="sw-complete" class="secondary" disabled>3. Complete</button>
+    </div>
+    <div id="sw-state" class="muted"></div>
+    <pre id="sw-json" class="json"></pre>
+  </section>
+
+  <!-- G. Worker -->
+  <section class="card" id="sec-worker">
+    <h2>G. Worker (Python) trực tiếp</h2>
+    <div class="row">
+      <button id="w-health">/worker/health</button>
+      <span id="w-health-out" class="muted"></span>
+    </div>
+    <div class="row">
+      <input type="file" id="w-file" accept="image/*,audio/*,.bmp">
+      <span id="w-file-info" class="muted"></span>
+    </div>
+    <div class="row" id="w-audio-opts" hidden>
+      <label class="grow">segmentStartMs: <span id="w-start-label">0</span>
+        <input type="range" id="w-start" min="0" max="0" step="50" value="0"></label>
+    </div>
+    <div class="row">
+      <button id="w-run">Upload + xử lý</button>
+      <span id="w-state" class="muted"></span>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Phản hồi JSON</h3>
+        <pre id="w-json" class="json"></pre>
+      </div>
+      <div>
+        <h3>Xem trước</h3>
+        <div class="previews">
+          <figure><figcaption>alpha PNG + hull</figcaption><canvas id="w-canvas" width="300" height="300"></canvas></figure>
+          <figure><figcaption>SVG</figcaption><img id="w-svg" alt="" class="checker"></figure>
+          <figure id="w-audio-wrap" hidden><figcaption>audio segment</figcaption><audio id="w-audio-seg" controls></audio></figure>
+        </div>
+      </div>
+    </div>
+    <div id="w-wave" hidden>
+      <h3>WAVECODE</h3>
+      <div>levels (18): <div id="w-levels" class="bars"></div></div>
+      <div>bars: <div id="w-bars" class="bars"></div></div>
+      <div class="row">
+        <label>Candidate nudge <select id="w-nudge"></select></label>
+        <button id="w-render" class="secondary">Render wavecode</button>
+      </div>
+      <div class="previews">
+        <figure><figcaption>render PNG</figcaption><img id="w-render-png" alt="" class="checker"></figure>
+        <figure><figcaption>render SVG</figcaption><img id="w-render-svg" alt="" class="checker"></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- H. ESP32 -->
+  <section class="card" id="sec-serial">
+    <h2>H. ESP32-S3 qua MQTT hoặc USB</h2>
+    <p class="hint"><b>MQTT:</b> trang đóng vai Operations: nhận <code>attempts</code> / <code>hello</code>, gửi <code>commands</code> / <code>results</code> qua broker. <b>Tắt operations-service</b> (server và local) trong lúc test, nếu không cả hai cùng trả lời thiết bị. Thiết bị phải ở chế độ MQTT và đã vào Wi-Fi. <b>USB:</b> frame <code>@MEMORA</code> qua Web Serial (Chrome / Edge).</p>
+    <div class="row">
+      <label>Kênh
+        <select id="tr-mode"><option value="mqtt" selected>MQTT</option><option value="usb">USB (Web Serial)</option></select></label>
+    </div>
+    <div class="row" id="mqtt-row">
+      <label>Broker <input id="mqtt-url" value="wss://mqtt.memora.style" size="26"></label>
+      <label>User <input id="mqtt-user" value="memora-operations" size="18" autocomplete="off"></label>
+      <label>Mật khẩu <input id="mqtt-pass" type="password" size="18" autocomplete="off"></label>
+      <button id="mqtt-connect">Kết nối MQTT</button>
+      <button id="mqtt-disconnect" class="secondary" disabled>Ngắt</button>
+      <label class="inline"><input type="checkbox" id="mqtt-auto" checked> tự trả results PENDING_REVIEW</label>
+      <span id="mqtt-state" class="muted">chưa kết nối</span>
+    </div>
+    <div class="row" id="usb-row" hidden>
+      <label>Baud
+        <select id="ser-baud"><option>921600</option><option>460800</option><option>230400</option><option>115200</option></select>
+      </label>
+      <button id="ser-connect">Kết nối</button>
+      <button id="ser-disconnect" class="secondary" disabled>Ngắt</button>
+      <label class="inline"><input type="checkbox" id="ser-autoping" checked> ping mỗi 5 s</label>
+      <span id="ser-state" class="muted">chưa kết nối</span>
+    </div>
+    <div class="row">
+      <label>d (deviceCode) <input id="ser-device" size="18"></label>
+      <label>sessionId <input id="ser-session" size="38"></label>
+      <label>attemptNo <input id="ser-attempt" type="number" min="1" max="3" value="1" style="width:4em"></label>
+    </div>
+    <div class="row">
+      <button class="ser-send" data-kind="ping">ping</button>
+      <button class="ser-send" data-kind="start">commands: start</button>
+      <button class="ser-send" data-kind="next">commands: next</button>
+      <label>end status
+        <select id="ser-end-status"><option>COMPLETED</option><option>CANCELLED</option><option>FAILED</option></select></label>
+      <button class="ser-send" data-kind="end">commands: end</button>
+    </div>
+    <div class="row">
+      <label>results
+        <select id="ser-res-result"><option>PENDING_REVIEW</option><option>REJECTED</option></select></label>
+      <label>suggestion
+        <select id="ser-res-sug"><option>PASS</option><option>LOW_QUALITY</option></select></label>
+      <button class="ser-send" data-kind="results">results (dùng nonce của attempts gần nhất)</button>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Frame (MQTT / @MEMORA)</h3>
+        <div id="ser-frames" class="frames"></div>
+      </div>
+      <div>
+        <h3>Log serial thô</h3>
+        <pre id="ser-raw" class="json"></pre>
+      </div>
+    </div>
+    <div id="ser-image" hidden>
+      <h3>Ảnh attempts gần nhất</h3>
+      <img id="ser-bmp" alt="" class="checker">
+      <button id="ser-to-worker" class="secondary">Xử lý ảnh này bằng worker (mục G)</button>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="row"><strong>Log</strong><button id="log-clear" class="secondary">Xóa</button></div>
+  <pre id="log"></pre>
+</footer>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
