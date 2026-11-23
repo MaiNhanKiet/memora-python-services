@@ -11,8 +11,8 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
-from .config import get_settings
-from .errors import WorkerError, object_not_found, storage_unavailable
+from ..core.config import get_settings
+from ..core.errors import WorkerError, object_not_found, storage_unavailable
 
 _NOT_FOUND_CODES = {"NoSuchKey", "404", "NotFound"}
 

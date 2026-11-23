@@ -1,27 +1,33 @@
-"""FastAPI entrypoint: /health and the three /v1 endpoints (contract v1)."""
+"""FastAPI entrypoint (`uvicorn app.main:app`): wires routers, handlers and the docs toggle."""
 
 from __future__ import annotations
 
-import logging
-import shutil
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, TypeVar
+from typing import Any
 
-from fastapi import Depends, FastAPI, Request
-from fastapi.concurrency import run_in_threadpool
+from fastapi import FastAPI
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import fingerprint, soundwave, storage
-from .auth import require_secret
-from .config import ConfigError, get_settings
-from .errors import WorkerError, invalid_request
-from .logging_config import configure_logging
-from .schemas import FingerprintRequest, RenderWavecodeRequest, SoundwaveRequest
+from .api.exception_handlers import register_exception_handlers
+from .api.routes import fingerprint, health, soundwave
+from .core.config import ConfigError, get_settings
+from .core.logging import configure_logging
+from .core.version import PROCESSOR_VERSION
 
-logger = logging.getLogger("personalization.api")
-M = TypeVar("M", bound=BaseModel)
+DESCRIPTION = (
+    "Worker xử lý vân tay / soundwave cho MEMORA Personalization. "
+    "Mọi phản hồi dùng chung envelope với API Gateway: thành công "
+    "`{statusCode, message, data}`, lỗi `{statusCode, code, message, path, timestamp}`. "
+    "Các endpoint `/v1` cần header `X-Memora-Worker-Secret` (nút Authorize)."
+)
+TAGS = [
+    {"name": "Health", "description": "Kiểm tra sống và công cụ (không cần secret)."},
+    {"name": "Fingerprint", "description": "Ảnh vân tay sang SVG + PNG để khắc laser."},
+    {"name": "Soundwave", "description": "Audio sang WAVECODE (SVG + PNG)."},
+]
 
 
 @asynccontextmanager
@@ -31,68 +37,47 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(
-    title="MEMORA personalization worker",
-    version="1",
-    lifespan=lifespan,
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
-
-
-@app.exception_handler(WorkerError)
-async def _worker_error(_: Request, exc: WorkerError) -> JSONResponse:
-    return JSONResponse(status_code=exc.http_status, content=exc.body())
-
-
-@app.exception_handler(Exception)
-async def _unexpected(_: Request, exc: Exception) -> JSONResponse:
-    logger.error("unexpected error", extra={"ctx": {"error": type(exc).__name__}})
-    code = "CONFIG_ERROR" if isinstance(exc, ConfigError) else "INTERNAL_ERROR"
-    return JSONResponse(
-        status_code=500,
-        content={"status": "FAILED", "failureCode": code, "message": "Internal worker error."},
-    )
-
-
-async def _parse(request: Request, model: type[M]) -> M:
-    body = await request.body()
+def _docs_enabled() -> bool:
     try:
-        return model.model_validate_json(body)
-    except ValidationError as exc:
-        fields = sorted({".".join(str(p) for p in e["loc"]) for e in exc.errors()})
-        raise invalid_request("Invalid request body: " + ", ".join(fields)) from exc
-
-
-async def _handle(request: Request, model: type[M], fn: Callable[[M], Any]) -> JSONResponse:
-    parsed = await _parse(request, model)
-    result = await run_in_threadpool(fn, parsed)
-    return JSONResponse(content=result.model_dump(mode="json"))
-
-
-@app.get("/health")
-def health() -> dict[str, Any]:
-    try:
-        settings = get_settings()
-        potrace_ok = shutil.which(settings.potrace_binary) is not None
-        ffmpeg_ok = shutil.which(settings.ffmpeg_binary) is not None
-        storage_ok = storage.check()
+        return get_settings().docs_enabled
     except ConfigError:
-        potrace_ok = ffmpeg_ok = storage_ok = False
-    return {"status": "ok", "potrace": potrace_ok, "ffmpeg": ffmpeg_ok, "storage": storage_ok}
+        return False
 
 
-@app.post("/v1/fingerprint/process", dependencies=[Depends(require_secret)])
-async def fingerprint_process(request: Request) -> JSONResponse:
-    return await _handle(request, FingerprintRequest, fingerprint.run)
+def create_app() -> FastAPI:
+    application = FastAPI(
+        title="MEMORA personalization worker",
+        version=PROCESSOR_VERSION,
+        description=DESCRIPTION,
+        openapi_tags=TAGS,
+        lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    register_exception_handlers(application)
+
+    # Docs are read from settings per request, so WORKER_DOCS_ENABLED=false answers 404.
+    @application.get("/openapi.json", include_in_schema=False)
+    async def openapi_schema() -> JSONResponse:
+        if not _docs_enabled():
+            raise StarletteHTTPException(404, "Not Found")
+        return JSONResponse(application.openapi())
+
+    @application.get("/docs", include_in_schema=False)
+    async def swagger_ui() -> Any:
+        if not _docs_enabled():
+            raise StarletteHTTPException(404, "Not Found")
+        return get_swagger_ui_html(
+            openapi_url="/openapi.json",
+            title=f"{application.title} - Swagger UI",
+            swagger_ui_parameters={"persistAuthorization": True},
+        )
+
+    application.include_router(health.router)
+    application.include_router(fingerprint.router)
+    application.include_router(soundwave.router)
+    return application
 
 
-@app.post("/v1/soundwave/process", dependencies=[Depends(require_secret)])
-async def soundwave_process(request: Request) -> JSONResponse:
-    return await _handle(request, SoundwaveRequest, soundwave.run)
-
-
-@app.post("/v1/soundwave/render-wavecode", dependencies=[Depends(require_secret)])
-async def soundwave_render(request: Request) -> JSONResponse:
-    return await _handle(request, RenderWavecodeRequest, soundwave.render)
+app = create_app()

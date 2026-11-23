@@ -3,7 +3,7 @@ import io
 import numpy as np
 from PIL import Image
 
-from app import wavecode
+from app.processing import wavecode
 
 LEVELS = [3, 5, 6, 4, 2, 1, 4, 6, 7, 5, 3, 2, 4, 5, 6, 3, 2, 1]
 BARS = [7, 3, 5, 6, 4, 2, 1, 4, 6, 7, 5, 7, 5, 3, 2, 4, 5, 6, 3, 2, 1, 5, 7]

@@ -32,6 +32,7 @@ class Settings:
     s3_secret_access_key: str
     potrace_binary: str = "potrace"
     ffmpeg_binary: str = "ffmpeg"
+    docs_enabled: bool = False
 
 
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
@@ -53,6 +54,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         s3_secret_access_key=values["S3_SECRET_ACCESS_KEY"],
         potrace_binary=(source.get("POTRACE_BINARY") or "potrace").strip(),
         ffmpeg_binary=(source.get("FFMPEG_BINARY") or "ffmpeg").strip(),
+        docs_enabled=(source.get("WORKER_DOCS_ENABLED") or "").strip().lower()
+        in {"1", "true", "yes", "on"},
     )
 
 

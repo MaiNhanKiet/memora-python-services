@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def _read_version() -> str:
-    path = Path(__file__).resolve().parent.parent / "VERSION"
+    path = Path(__file__).resolve().parent.parent.parent / "VERSION"
     try:
         value = path.read_text(encoding="utf-8").strip()
     except OSError:

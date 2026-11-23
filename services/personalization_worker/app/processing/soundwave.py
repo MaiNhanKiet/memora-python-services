@@ -14,15 +14,15 @@ from pathlib import Path
 
 import numpy as np
 
-from . import storage, wavecode
-from .config import get_settings
-from .errors import (
+from ..core.config import get_settings
+from ..core.errors import (
     audio_duration_invalid,
     audio_unreadable,
     segment_out_of_range,
     tool_unavailable,
 )
-from .schemas import (
+from ..core.version import PROCESSOR_VERSION
+from ..schemas import (
     OutputFile,
     PngOutputFile,
     RenderOutputs,
@@ -33,7 +33,8 @@ from .schemas import (
     SoundwaveResponse,
     Wavecode,
 )
-from .version import PROCESSOR_VERSION
+from ..storage import s3 as storage
+from . import wavecode
 
 logger = logging.getLogger("personalization.soundwave")
 
@@ -69,8 +70,23 @@ def _decode_with_ffmpeg(path: Path, workdir: Path, ffmpeg_binary: str) -> tuple[
     if not exe:
         raise tool_unavailable("ffmpeg")
     out = workdir / "decoded.wav"
-    cmd = [exe, "-nostdin", "-v", "error", "-y", "-i", str(path), "-vn", "-ac", "1",
-           "-t", str(FFMPEG_MAX_DECODE_S), "-c:a", "pcm_s16le", str(out)]
+    cmd = [
+        exe,
+        "-nostdin",
+        "-v",
+        "error",
+        "-y",
+        "-i",
+        str(path),
+        "-vn",
+        "-ac",
+        "1",
+        "-t",
+        str(FFMPEG_MAX_DECODE_S),
+        "-c:a",
+        "pcm_s16le",
+        str(out),
+    ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT_S, check=False)
     except subprocess.TimeoutExpired as exc:
@@ -179,8 +195,11 @@ def run(req: SoundwaveRequest) -> SoundwaveResponse:
         "measuredDurationMs": measured,
         "outputs": {
             "vectorSvg": asdict(svg),
-            "alphaPng": {**asdict(png), "widthPx": wavecode.PNG_WIDTH,
-                         "heightPx": wavecode.PNG_HEIGHT},
+            "alphaPng": {
+                **asdict(png),
+                "widthPx": wavecode.PNG_WIDTH,
+                "heightPx": wavecode.PNG_HEIGHT,
+            },
             "audioSegment": asdict(audio),
         },
         "wavecode": wc.model_dump(),

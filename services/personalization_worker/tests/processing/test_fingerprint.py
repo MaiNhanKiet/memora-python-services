@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 from conftest import PREFIX, SOURCE_ID, needs_potrace
 
-from app import config
-from app.fingerprint import rescale_potrace_svg
+from app.core import config
+from app.processing.fingerprint import rescale_potrace_svg
 
 RAW = "personalization/fingerprint/raw/s1/a1"
 BODY = {"sourceId": SOURCE_ID, "rawKey": RAW, "outputPrefix": PREFIX}
@@ -37,7 +37,9 @@ def test_pipeline_on_synthetic_image(client, auth, store):
 
     r = client.post("/v1/fingerprint/process", json=BODY, headers=auth)
     assert r.status_code == 200, r.text
-    data = r.json()
+    envelope = r.json()
+    assert envelope["statusCode"] == 200 and envelope["message"] == "Fingerprint processed"
+    data = envelope["data"]
     assert data["status"] == "READY"
     assert set(data) == {"status", "processorVersion", "outputs", "artwork", "quality"}
     out = data["outputs"]
@@ -71,7 +73,7 @@ def test_unreadable_image_is_422(client, auth, store):
     store[RAW] = (b"this is not an image", "image/bmp")
     r = client.post("/v1/fingerprint/process", json=BODY, headers=auth)
     assert r.status_code == 422
-    assert r.json()["failureCode"] == "IMAGE_UNREADABLE"
+    assert r.json()["code"] == "IMAGE_UNREADABLE"
 
 
 def test_blank_image_has_no_region_422(client, auth, store):
@@ -80,7 +82,7 @@ def test_blank_image_has_no_region_422(client, auth, store):
     store[RAW] = (png.tobytes(), "image/png")
     r = client.post("/v1/fingerprint/process", json=BODY, headers=auth)
     assert r.status_code == 422
-    assert r.json()["failureCode"] == "FINGERPRINT_REGION_NOT_FOUND"
+    assert r.json()["code"] == "FINGERPRINT_REGION_NOT_FOUND"
 
 
 def test_missing_potrace_is_503(client, auth, store, monkeypatch):
@@ -91,4 +93,4 @@ def test_missing_potrace_is_503(client, auth, store, monkeypatch):
     store[RAW] = (bmp.tobytes(), "image/bmp")
     r = client.post("/v1/fingerprint/process", json=BODY, headers=auth)
     assert r.status_code == 503
-    assert r.json()["failureCode"] == "TOOL_UNAVAILABLE"
+    assert r.json()["code"] == "TOOL_UNAVAILABLE"

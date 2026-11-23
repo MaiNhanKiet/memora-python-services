@@ -15,14 +15,14 @@ from typing import Any
 import cv2
 import numpy as np
 
-from . import storage
-from .config import get_settings
-from .errors import (
+from ..core.config import get_settings
+from ..core.errors import (
     fingerprint_region_not_found,
     image_unreadable,
     tool_unavailable,
 )
-from .schemas import (
+from ..core.version import PROCESSOR_VERSION
+from ..schemas import (
     Artwork,
     FingerprintOutputs,
     FingerprintRequest,
@@ -31,7 +31,7 @@ from .schemas import (
     PngOutputFile,
     Quality,
 )
-from .version import PROCESSOR_VERSION
+from ..storage import s3 as storage
 
 logger = logging.getLogger("personalization.fingerprint")
 
@@ -213,8 +213,10 @@ def compute_hull(final: np.ndarray) -> list[list[float]]:
         eps *= 1.5
     size = float(final.shape[0])
     return [
-        [round(min(1.0, (float(p[0][0]) + 0.5) / size), 4),
-         round(min(1.0, (float(p[0][1]) + 0.5) / size), 4)]
+        [
+            round(min(1.0, (float(p[0][0]) + 0.5) / size), 4),
+            round(min(1.0, (float(p[0][1]) + 0.5) / size), 4),
+        ]
         for p in simplified
     ]
 
@@ -234,8 +236,19 @@ def vectorize(final: np.ndarray, potrace_binary: str, workdir: Path) -> str:
     pbm = workdir / "fingerprint.pbm"
     pbm.write_bytes(f"P4\n{w} {h}\n".encode("ascii") + np.packbits(bits, axis=1).tobytes())
     raw_svg = workdir / "potrace.svg"
-    cmd = [exe, str(pbm), "-s", "-o", str(raw_svg), "--turdsize", "3", "--alphamax", "0.75",
-           "--opttolerance", "0.06"]
+    cmd = [
+        exe,
+        str(pbm),
+        "-s",
+        "-o",
+        str(raw_svg),
+        "--turdsize",
+        "3",
+        "--alphamax",
+        "0.75",
+        "--opttolerance",
+        "0.06",
+    ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=POTRACE_TIMEOUT_S, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:

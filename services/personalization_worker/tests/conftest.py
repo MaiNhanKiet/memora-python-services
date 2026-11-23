@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import config, storage
-from app.errors import object_not_found
+from app.core import config
+from app.core.errors import object_not_found
 from app.main import app
+from app.storage import s3 as storage
 
 SECRET = "test-secret-0123456789"
 SOURCE_ID = "3f2b6c1e-8a4d-4c55-9a77-0d1e2f3a4b5c"

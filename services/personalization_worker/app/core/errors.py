@@ -1,4 +1,4 @@
-"""Contract section 3: failureCode / HTTP mapping."""
+"""Contract section 3: error code / HTTP mapping (code is the envelope `code`)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,6 @@ class WorkerError(Exception):
         self.http_status = http_status
         self.failure_code = failure_code
         self.message = message
-
-    def body(self) -> dict[str, str]:
-        return {"status": "FAILED", "failureCode": self.failure_code, "message": self.message}
 
 
 def invalid_request(message: str) -> WorkerError:
