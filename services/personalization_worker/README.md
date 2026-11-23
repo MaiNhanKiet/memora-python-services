@@ -11,7 +11,10 @@ Contract (source of truth, change it there first):
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/health` | Liveness plus `potrace`, `ffmpeg`, `storage` flags. No secret. |
-| POST | `/v1/fingerprint/process` | Fingerprint image to `fingerprint.svg` + `fingerprint_alpha.png`. |
+| POST | `/v1/fingerprint/process` | Fingerprint image to `base.png` (~2048 px cleaned) and default version `v0` (`versions/v0/fingerprint.svg` + `fingerprint_alpha.png`). |
+| GET | `/v1/fingerprint/presets` | Frame presets (NATURAL, CIRCLE, HEART, SQUARE) with a sample SVG each. |
+| POST | `/v1/fingerprint/render-crop` | Frame + offset + zoom + eraser strokes on `base.png` into a new version. |
+| POST | `/v1/fingerprint/select-version` | Accept one version: delete the other versions and `base.png`. |
 | GET | `/v1/soundwave/presets` | Wavecode style presets with a sample SVG each (secret required). |
 | POST | `/v1/soundwave/process` | Audio to 3 s segment, `wavecode-{style}.svg`, `wavecode-{style}_alpha.png` (requested style only), `audio_segment.wav`. |
 | POST | `/v1/soundwave/render-wavecode` | Render a WAVECODE style from 18 explicit levels; reuses existing files, adds styles. |
@@ -99,6 +102,49 @@ The manifest top-level `outputs.vectorSvg` / `outputs.alphaPng` point at the cur
   `{ status, processorVersion, outputs: {vectorSvg, alphaPng, manifest}, wavecode, deleted: [keys] }`.
   A missing manifest is `404 OBJECT_NOT_FOUND`.
 
+## Fingerprint artwork design
+
+Layout under `outputPrefix`: `base.png`, `versions/{versionId}/fingerprint.svg` and
+`fingerprint_alpha.png`, `manifest.json`. There is no top-level `fingerprint.svg` any more; the
+response `outputs.vectorSvg` / `alphaPng` point at the current version (`v0` after `process`).
+
+- **Cleanup** (in `process`): after small-component removal the worker drops solid blobs (component
+  larger than 0.15 % of the image, fill ratio against its convex hull > 0.85 and holding a disc of
+  radius >= max(6 px, 2 % of the shorter side); ridges are thin so they never qualify). A second filter
+  drops border-touching components only when they are solid by the same test, or tiny (< 0.05 % of the
+  image) and farther than 3 % of the shorter side from the main ridge region; thin elongated components
+  that run off the border (the finger usually covers the whole sensor) always stay. Safety net: if both
+  filters together would remove more than 5 % of the ink, the border filter is skipped for that image.
+  The manifest records `quality.cleanup: {solidRemovedRatio, borderRemovedRatio, borderFilterSkipped}`.
+- **`process`** writes `base.png` (square, 2048 px, ridges black on white, grayscale PNG) and version
+  `v0` (`NATURAL`, offset 0, zoom 1, no erase; coverage is reported but not enforced). Response adds
+  `version` and `base` to the usual `outputs`, `artwork: {aspectRatio, hull}`, `quality`:
+  `version: {versionId, shape, offsetX, offsetY, zoom, erasedRatio, ridgeWidthRatio, minEngraveSizeMm, coverage}`,
+  `base: {key, sha256, sizeBytes, widthPx, heightPx}`.
+- **`GET /v1/fingerprint/presets`**: `{ defaultShape: "NATURAL", shapes: [{code, name, description, sampleSvg}] }`
+  (Tự nhiên, Khung tròn, Trái tim, Vuông bo góc; sample SVGs are outline icons only).
+- **`POST /v1/fingerprint/render-crop`** `{sourceId, outputPrefix, versionId (^[a-z0-9-]{1,40}$), shape,
+  offsetX (-1..1), offsetY (-1..1), zoom (1..3), eraseStrokes? [{radius 0.005..0.1, points [[x,y] in 0..1]
+  1..200}] max 50, context?}`. Missing `base.png` is `404 OBJECT_NOT_FOUND`. Erase strokes (white discs and
+  lines in normalized base coordinates) are applied first; `erasedRatio` = erased ink pixels / ink pixels
+  before, over 0.15 is `422 ERASE_AREA_TOO_LARGE`. The frame window has side (shorter side / zoom) and is
+  centred on the base centre moved by the offset (offset 1 = half the shorter side), then masked by the shape
+  (NATURAL = ellipse fitted to the ridge region of the window, CIRCLE, HEART, SQUARE with 12 % corner radius)
+  and fitted to the 1024 canvas. `coverage` = frame area covered by dilated ink / frame area, under 0.70 is
+  `422 FRAME_COVERAGE_TOO_LOW`. `ridgeWidthRatio` = 90th percentile stroke width (px) / canvas px;
+  `minEngraveSizeMm` = max(3.0, ceil to 0.1 of 0.07 / ridgeWidthRatio). Zooming in makes ridges wider on the
+  canvas, so `minEngraveSizeMm` goes down as zoom goes up. Response: `{status, processorVersion, outputs
+  {vectorSvg, alphaPng, manifest}, artwork, version, base}`. The same `versionId` overwrites only that version.
+- **`POST /v1/fingerprint/select-version`** `{sourceId, outputPrefix, versionId, context?}`: unknown version
+  is `422 VERSION_NOT_FOUND`. Deletes the files of every other version **and `base.png`** (the accepted
+  vector is final, so the base is no longer needed and render-crop afterwards is `404`), rewrites the
+  manifest with only that version, `currentVersionId` and `"accepted": true` (no `base`). Idempotent.
+  Response `{status, processorVersion, outputs, artwork, version, deleted: [keys]}`.
+- **Manifest**: `{kind, processorVersion, request, quality, base, versions: {id: {versionId, shape, offsetX,
+  offsetY, zoom, erasedRatio, ridgeWidthRatio, minEngraveSizeMm, coverage, eraseStrokes, hull, vectorSvg,
+  alphaPng, createdAt}}, currentVersionId, outputs (current version files), artwork (current hull), context,
+  accepted?}`.
+
 ## Cấu trúc thư mục
 
 ```text
@@ -112,7 +158,7 @@ app/
     responses.py           envelope thành công/lỗi và ví dụ OpenAPI cho từng endpoint
   core/                    config.py (env, Settings), errors.py (mã lỗi), logging.py, version.py
   schemas/                 model Pydantic: common (envelope, key), fingerprint, soundwave, health
-  processing/              fingerprint.py, soundwave.py, wavecode.py, wavecode_styles.py: pipeline xử lý ảnh/audio
+  processing/              fingerprint.py, fingerprint_design.py, soundwave.py, wavecode.py, wavecode_styles.py: pipeline xử lý ảnh/audio
   storage/s3.py            truy cập Garage qua S3 API
 tests/
   api/                     test endpoint, envelope, auth, docs

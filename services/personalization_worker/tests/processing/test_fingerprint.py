@@ -41,19 +41,28 @@ def test_pipeline_on_synthetic_image(client, auth, store):
     assert envelope["statusCode"] == 200 and envelope["message"] == "Fingerprint processed"
     data = envelope["data"]
     assert data["status"] == "READY"
-    assert set(data) == {"status", "processorVersion", "outputs", "artwork", "quality"}
+    assert set(data) == {
+        "status",
+        "processorVersion",
+        "outputs",
+        "artwork",
+        "quality",
+        "version",
+        "base",
+    }
     out = data["outputs"]
-    assert out["vectorSvg"]["key"] == PREFIX + "fingerprint.svg"
-    assert out["alphaPng"]["key"] == PREFIX + "fingerprint_alpha.png"
+    assert out["vectorSvg"]["key"] == PREFIX + "versions/v0/fingerprint.svg"
+    assert out["alphaPng"]["key"] == PREFIX + "versions/v0/fingerprint_alpha.png"
     assert out["manifest"]["key"] == PREFIX + "manifest.json"
     assert out["alphaPng"]["widthPx"] == out["alphaPng"]["heightPx"] == 1024
 
-    svg = store[PREFIX + "fingerprint.svg"][0].decode()
+    svg = store[PREFIX + "versions/v0/fingerprint.svg"][0].decode()
     assert 'viewBox="0 0 1000 1000"' in svg and "<path" in svg
-    assert store[PREFIX + "fingerprint.svg"][1] == "image/svg+xml"
+    assert store[PREFIX + "versions/v0/fingerprint.svg"][1] == "image/svg+xml"
 
     png = cv2.imdecode(
-        np.frombuffer(store[PREFIX + "fingerprint_alpha.png"][0], np.uint8), cv2.IMREAD_UNCHANGED
+        np.frombuffer(store[PREFIX + "versions/v0/fingerprint_alpha.png"][0], np.uint8),
+        cv2.IMREAD_UNCHANGED,
     )
     assert png.shape == (1024, 1024, 4)
     assert png[0, 0, 3] == 0 and (png[:, :, 3] == 255).any()

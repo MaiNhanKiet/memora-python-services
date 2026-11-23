@@ -53,6 +53,26 @@ def style_not_generated(style: str) -> WorkerError:
     )
 
 
+def erase_area_too_large(ratio: float) -> WorkerError:
+    return WorkerError(
+        422,
+        "ERASE_AREA_TOO_LARGE",
+        f"Erased {ratio:.1%} of the ridge area; at most 15% may be erased.",
+    )
+
+
+def frame_coverage_too_low(coverage: float) -> WorkerError:
+    return WorkerError(
+        422,
+        "FRAME_COVERAGE_TOO_LOW",
+        f"The frame contains {coverage:.0%} ridges; at least 70% is required.",
+    )
+
+
+def version_not_found(version_id: str) -> WorkerError:
+    return WorkerError(422, "VERSION_NOT_FOUND", f"Artwork version {version_id} does not exist.")
+
+
 def storage_unavailable() -> WorkerError:
     return WorkerError(503, "STORAGE_UNAVAILABLE", "Object storage is unavailable.")
 

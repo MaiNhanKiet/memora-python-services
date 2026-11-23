@@ -2,38 +2,16 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import re
 import shutil
 import subprocess
-import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
 
-from ..core.config import get_settings
-from ..core.errors import (
-    fingerprint_region_not_found,
-    image_unreadable,
-    tool_unavailable,
-)
-from ..core.version import PROCESSOR_VERSION
-from ..schemas import (
-    Artwork,
-    FingerprintOutputs,
-    FingerprintRequest,
-    FingerprintResponse,
-    OutputFile,
-    PngOutputFile,
-    Quality,
-)
-from ..storage import s3 as storage
-
-logger = logging.getLogger("personalization.fingerprint")
+from ..core.errors import fingerprint_region_not_found, tool_unavailable
 
 CANVAS_SIZE = 1024
 CONTENT_RATIO = 0.85
@@ -48,6 +26,13 @@ MAX_SIDE = 1600
 SVG_VIEWBOX = 1000
 MAX_HULL_POINTS = 32
 POTRACE_TIMEOUT_S = 40
+BASE_SIZE = 2048
+BLOB_MIN_AREA_RATIO = 0.0015
+BLOB_FILL_RATIO = 0.85
+BLOB_MIN_RADIUS_RATIO = 0.02
+BORDER_STRAY_DISTANCE_RATIO = 0.03
+BORDER_TINY_AREA_RATIO = 0.0005
+MAX_CLEANUP_RATIO = 0.05
 
 
 def _odd_at_least(value: int, minimum: int = 3) -> int:
@@ -69,6 +54,81 @@ def remove_small_components(binary_img: np.ndarray, min_area: int = MIN_AREA) ->
     keep = np.zeros(num, dtype=bool)
     keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= min_area
     out = np.where(keep[labels], 255, 0).astype(np.uint8)
+    return cv2.bitwise_not(out)
+
+
+def _is_solid(mask: np.ndarray, area: int, shape: tuple[int, int]) -> bool:
+    """True when the component is a thick, convex-looking blob rather than a thin ridge."""
+    h, w = shape
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    hull_area = cv2.contourArea(cv2.convexHull(np.vstack(contours)))
+    if hull_area <= 0 or area / hull_area <= BLOB_FILL_RATIO:
+        return False
+    min_radius = max(6.0, BLOB_MIN_RADIUS_RATIO * min(h, w))
+    return float(cv2.distanceTransform(mask, cv2.DIST_L2, 3).max()) >= min_radius
+
+
+def drop_solid_blobs(binary_img: np.ndarray) -> np.ndarray:
+    """Drop solid blobs (no ridge texture): big, thick and almost equal to their convex hull.
+
+    Conservative: a component goes only when it is larger than BLOB_MIN_AREA_RATIO of the image,
+    its fill ratio against the convex hull is above BLOB_FILL_RATIO and it holds a disc of at
+    least BLOB_MIN_RADIUS_RATIO of the image side (ridges are thin, so they never do).
+    """
+    inv = cv2.bitwise_not(binary_img)
+    h, w = inv.shape[:2]
+    min_area = BLOB_MIN_AREA_RATIO * h * w
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, connectivity=8)
+    out = inv.copy()
+    for i in range(1, num):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if area >= min_area and _is_solid((labels == i).astype(np.uint8), area, (h, w)):
+            out[labels == i] = 0
+    return cv2.bitwise_not(out)
+
+
+def drop_border_strays(binary_img: np.ndarray) -> np.ndarray:
+    """Drop border-touching components that are clearly not ridges.
+
+    A component touching the image border goes only when it is solid (thick disc and high fill
+    ratio) or tiny (below BORDER_TINY_AREA_RATIO of the image) and far from the main ridge region.
+    Elongated thin components that run off the border (real ridges) always stay.
+    """
+    inv = cv2.bitwise_not(binary_img)
+    h, w = inv.shape[:2]
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(inv, connectivity=8)
+    if num <= 2:
+        return binary_img
+    areas = stats[:, cv2.CC_STAT_AREA]
+
+    def touches(i: int) -> bool:
+        x, y = stats[i, cv2.CC_STAT_LEFT], stats[i, cv2.CC_STAT_TOP]
+        return bool(
+            x == 0
+            or y == 0
+            or x + stats[i, cv2.CC_STAT_WIDTH] >= w
+            or y + stats[i, cv2.CC_STAT_HEIGHT] >= h
+        )
+
+    big = BLOB_MIN_AREA_RATIO * h * w
+    solid = {  # only components that could matter are tested (keeps this cheap on big images)
+        i: _is_solid((labels == i).astype(np.uint8), int(areas[i]), (h, w))
+        for i in range(1, num)
+        if areas[i] >= big or touches(i)
+    }
+    candidates = [i for i in range(1, num) if not solid.get(i)] or list(range(1, num))
+    main = max(candidates, key=lambda i: areas[i])  # a solid blob is never the "main region"
+    near = cv2.distanceTransform((labels != main).astype(np.uint8), cv2.DIST_L2, 3)
+    far = BORDER_STRAY_DISTANCE_RATIO * min(h, w)
+    tiny = BORDER_TINY_AREA_RATIO * h * w
+    out = inv.copy()
+    for i in range(1, num):
+        if i == main or not touches(i):
+            continue
+        mask = labels == i
+        is_tiny_far = int(areas[i]) < tiny and float(near[mask].min()) > far
+        if is_tiny_far or solid.get(i):
+            out[mask] = 0
     return cv2.bitwise_not(out)
 
 
@@ -159,8 +219,17 @@ def check_quality(gray: np.ndarray) -> dict[str, Any]:
     return {"score": score, "message": message}
 
 
-def preprocess(image: np.ndarray) -> np.ndarray:
-    """OpenCV pipeline -> final 1024x1024 uint8 canvas (0 = ridge, 255 = background)."""
+def clean_binary(image: np.ndarray) -> np.ndarray:
+    """OpenCV pipeline -> cleaned, cropped binary (0 = ridge, 255 = background)."""
+    return clean_binary_info(image)[0]
+
+
+def _ink(img: np.ndarray) -> int:
+    return int(cv2.countNonZero(cv2.bitwise_not(img)))
+
+
+def clean_binary_info(image: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+    """Like clean_binary, plus cleanup info (solid/border removed ratios, borderFilterSkipped)."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image.copy()
     h, w = gray.shape[:2]
     if max(h, w) > MAX_SIDE:
@@ -180,13 +249,43 @@ def preprocess(image: np.ndarray) -> np.ndarray:
     )
     binary = ensure_black_ridges_white_bg(binary_raw)
     cleaned = remove_small_components(binary, MIN_AREA)
+    ink0 = _ink(cleaned)
+    cleaned = drop_solid_blobs(cleaned)
+    ink1 = _ink(cleaned)
+    bordered = drop_border_strays(cleaned)
+    ink2 = _ink(bordered)
+    skipped = ink0 > 0 and (ink0 - ink2) / ink0 > MAX_CLEANUP_RATIO
+    if not skipped:  # safety net: never let the cleanup eat more than 5 % of the ink
+        cleaned = bordered
+    cleanup = {
+        "solidRemovedRatio": round((ink0 - ink1) / ink0, 4) if ink0 else 0.0,
+        "borderRemovedRatio": 0.0 if skipped or not ink0 else round((ink1 - ink2) / ink0, 4),
+        "borderFilterSkipped": bool(skipped),
+    }
     if cv2.countNonZero(cv2.bitwise_not(cleaned)) == 0:
         raise fingerprint_region_not_found()
     main_region = keep_fingerprint_main_region(cleaned, ERODE_SIZE)
     if cv2.countNonZero(cv2.bitwise_not(main_region)) == 0:
         raise fingerprint_region_not_found()
-    cropped = crop_to_fingerprint(main_region, PADDING)
-    return fit_to_square_canvas(cropped)
+    return crop_to_fingerprint(main_region, PADDING), cleanup
+
+
+def preprocess(image: np.ndarray) -> np.ndarray:
+    """Cleaned print fitted on the 1024x1024 canvas (0 = ridge, 255 = background)."""
+    return fit_to_square_canvas(clean_binary(image))
+
+
+def build_base(image: np.ndarray, size: int = BASE_SIZE) -> tuple[np.ndarray, dict[str, Any]]:
+    """Cleaned print on a square white canvas of `size` px, smooth edges, ridges black."""
+    cropped, cleanup = clean_binary_info(image)
+    h, w = cropped.shape[:2]
+    side = max(h, w)
+    square = np.full((side, side), 255, dtype=np.uint8)
+    y0, x0 = (side - h) // 2, (side - w) // 2
+    square[y0 : y0 + h, x0 : x0 + w] = cropped
+    interp = cv2.INTER_CUBIC if size > side else cv2.INTER_AREA
+    big = cv2.resize(square, (size, size), interpolation=interp)
+    return np.where(big < 128, 0, 255).astype(np.uint8), cleanup
 
 
 def alpha_png(final: np.ndarray) -> bytes:
@@ -273,78 +372,3 @@ def rescale_potrace_svg(text: str) -> str:
         f'<g transform="translate(0,{SVG_VIEWBOX}) scale({k:.8f},{-k:.8f})" '
         f'fill="#000000" stroke="none">{body}</g></svg>\n'
     )
-
-
-@dataclass
-class FingerprintArtifacts:
-    svg: bytes
-    png: bytes
-    hull: list[list[float]]
-    quality: dict[str, Any]
-
-
-def process_image_bytes(data: bytes, potrace_binary: str) -> FingerprintArtifacts:
-    image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if image is None or image.size == 0:
-        raise image_unreadable()
-    quality = check_quality(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY))
-    final = preprocess(image)
-    hull = compute_hull(final)
-    with tempfile.TemporaryDirectory(prefix="fp-") as tmp:
-        svg = vectorize(final, potrace_binary, Path(tmp))
-    return FingerprintArtifacts(
-        svg=svg.encode("utf-8"), png=alpha_png(final), hull=hull, quality=quality
-    )
-
-
-def run(req: FingerprintRequest) -> FingerprintResponse:
-    settings = get_settings()
-    ctx = {"sourceId": req.sourceId, "rawKey": req.rawKey}
-    logger.info("fingerprint start", extra={"ctx": ctx})
-    raw = storage.get_object(req.rawKey)
-    art = process_image_bytes(raw, settings.potrace_binary)
-
-    svg_out = storage.put_object(req.outputPrefix + "fingerprint.svg", art.svg, "image/svg+xml")
-    png_out = storage.put_object(req.outputPrefix + "fingerprint_alpha.png", art.png, "image/png")
-    artwork = {"aspectRatio": 1.0, "hull": art.hull}
-    manifest_doc = {
-        "kind": "FINGERPRINT",
-        "processorVersion": PROCESSOR_VERSION,
-        "request": {
-            "sourceId": req.sourceId,
-            "rawKey": req.rawKey,
-            "outputPrefix": req.outputPrefix,
-        },
-        "outputs": {
-            "vectorSvg": _file(svg_out),
-            "alphaPng": {**_file(png_out), "widthPx": CANVAS_SIZE, "heightPx": CANVAS_SIZE},
-        },
-        "artwork": artwork,
-        "quality": art.quality,
-    }
-    if req.context is not None:
-        manifest_doc["context"] = req.context.model_dump(exclude_none=True)
-    manifest_out = storage.put_object(
-        req.outputPrefix + "manifest.json",
-        json.dumps(manifest_doc, indent=2).encode("utf-8"),
-        "application/json",
-    )
-    return FingerprintResponse(
-        processorVersion=PROCESSOR_VERSION,
-        outputs=FingerprintOutputs(
-            vectorSvg=OutputFile(**_file(svg_out)),
-            alphaPng=PngOutputFile(**_file(png_out), widthPx=CANVAS_SIZE, heightPx=CANVAS_SIZE),
-            manifest=OutputFile(**_file(manifest_out)),
-        ),
-        artwork=Artwork(**artwork),
-        quality=Quality(**art.quality),
-    )
-
-
-def _file(obj: storage.StoredObject) -> dict[str, Any]:
-    return {
-        "key": obj.key,
-        "sha256": obj.sha256,
-        "sizeBytes": obj.sizeBytes,
-        "contentType": obj.contentType,
-    }

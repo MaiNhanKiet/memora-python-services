@@ -3,10 +3,19 @@
 from .common import Envelope, ErrorEnvelope, OutputFile, PngOutputFile, RequestContext
 from .fingerprint import (
     Artwork,
+    BaseImage,
+    EraseStroke,
     FingerprintOutputs,
+    FingerprintPresetsResponse,
     FingerprintRequest,
     FingerprintResponse,
+    FrameShapePreset,
     Quality,
+    RenderCropRequest,
+    RenderCropResponse,
+    SelectVersionRequest,
+    SelectVersionResponse,
+    Version,
 )
 from .health import HealthData
 from .soundwave import (
@@ -26,6 +35,15 @@ from .soundwave import (
 
 __all__ = [
     "Artwork",
+    "BaseImage",
+    "EraseStroke",
+    "FingerprintPresetsResponse",
+    "FrameShapePreset",
+    "RenderCropRequest",
+    "RenderCropResponse",
+    "SelectVersionRequest",
+    "SelectVersionResponse",
+    "Version",
     "Envelope",
     "ErrorEnvelope",
     "FingerprintOutputs",

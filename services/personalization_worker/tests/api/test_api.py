@@ -143,12 +143,12 @@ def test_wrong_method_uses_error_envelope(client):
 
 
 def test_unexpected_error_hides_details(client, auth, monkeypatch):
-    from app.processing import fingerprint
+    from app.processing import fingerprint_design
 
     def boom(_):
         raise RuntimeError("secret detail")
 
-    monkeypatch.setattr(fingerprint, "run", boom)
+    monkeypatch.setattr(fingerprint_design, "process", boom)
     body = {"sourceId": SOURCE_ID, "rawKey": PREFIX + "raw", "outputPrefix": PREFIX}
     r = client.post("/v1/fingerprint/process", json=body, headers=auth)
     assert_error(r, 500, "INTERNAL_ERROR", "/v1/fingerprint/process")

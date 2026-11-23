@@ -99,7 +99,8 @@ def error_responses(
             path,
             "Dữ liệu không xử lý được (xem `code`: IMAGE_UNREADABLE, "
             "FINGERPRINT_REGION_NOT_FOUND, AUDIO_UNREADABLE, AUDIO_DURATION_INVALID, "
-            "SEGMENT_OUT_OF_RANGE, STYLE_NOT_GENERATED).",
+            "SEGMENT_OUT_OF_RANGE, STYLE_NOT_GENERATED, ERASE_AREA_TOO_LARGE, "
+            "FRAME_COVERAGE_TOO_LOW, VERSION_NOT_FOUND).",
         ),
         500: _err_doc(
             500,
