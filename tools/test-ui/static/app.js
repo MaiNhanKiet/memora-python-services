@@ -422,9 +422,9 @@ async function presign(key) {
   log(`GET /dev/presign -> ${res.status}`, res.ok ? 'ok' : 'err');
   return res.ok ? (await res.json()).url : null;
 }
-/** Upload a Blob under personalization/test-ui/ through the server (never directly). */
-async function uploadRaw(blob, contentType) {
-  const key = `${WORKER_TMP}${uuid()}/raw`;
+/** Upload a Blob under personalization/test-ui/ through the server (never directly). Optional explicit key. */
+async function uploadRaw(blob, contentType, explicitKey) {
+  const key = explicitKey || `${WORKER_TMP}${uuid()}/raw`;
   const res = await fetch(`/dev/upload-raw?key=${encodeURIComponent(key)}&contentType=${encodeURIComponent(contentType)}`, { method: 'POST', body: blob });
   const j = await res.json(); log(`POST /dev/upload-raw -> ${res.status}`, res.ok ? 'ok' : 'err');
   if (!res.ok) throw new Error(pretty(j));
@@ -532,7 +532,7 @@ $('w-render').onclick = async () => {
   const svg = await presign(r.data.outputs.vectorSvg.key); if (svg) $('w-render-svg').src = svg;
 };
 
-// ---------------------------------------------------------------- H. ESP32 over Web Serial
+// ---------------------------------------------------------------- H. ESP32 over Web Serial (MQTT lives in sim.js)
 const SER = { port: null, reader: null, writer: null, open: false, lastAttempt: null, lastBmp: null, ping: null };
 const rawLines = [];
 
@@ -598,78 +598,8 @@ $('ser-disconnect').onclick = async () => {
   try { await SER.reader?.cancel(); await SER.port?.close(); } catch { /* ignore */ }
   $('ser-connect').disabled = false; $('ser-disconnect').disabled = true; $('ser-state').textContent = 'đã ngắt'; log('Serial đã đóng');
 };
-// ---------------------------------------------------------------- H. ESP32 over MQTT (page acts as Operations)
-// Topics: memora/capture/{deviceCode}/{attempts|hello} (device -> us), /{commands|results} (us -> device). QoS 1.
-const MQ = { client: null };
-const mode = () => $('tr-mode').value;
-$('tr-mode').onchange = () => { $('mqtt-row').hidden = mode() !== 'mqtt'; $('usb-row').hidden = mode() !== 'usb'; };
-
-$('mqtt-connect').onclick = () => {
-  if (typeof mqtt === 'undefined') { log('Không tải được mqtt.js (cần Internet tới unpkg.com).', 'err'); return; }
-  const pass = $('mqtt-pass').value;
-  if (!pass) { log('Nhập mật khẩu MQTT (OPERATIONS_MQTT_PASSWORD), không lưu lại.', 'err'); return; }
-  MQ.client = mqtt.connect($('mqtt-url').value.trim(), {
-    username: $('mqtt-user').value.trim(), password: pass,
-    clientId: `memora-test-ui-${Math.random().toString(16).slice(2, 10)}`, // never memora-operations
-    clean: true, reconnectPeriod: 3000, connectTimeout: 10000, protocolVersion: 4,
-  });
-  $('mqtt-state').textContent = 'đang kết nối...';
-  MQ.client.on('connect', () => {
-    $('mqtt-state').textContent = 'đã kết nối, chờ attempts/hello';
-    $('mqtt-connect').disabled = true; $('mqtt-disconnect').disabled = false;
-    MQ.client.subscribe(['memora/capture/+/attempts', 'memora/capture/+/hello'], { qos: 1 }, (err) => {
-      if (err) log(`Subscribe lỗi: ${err.message}`, 'err'); else log('MQTT đã subscribe memora/capture/+/attempts, +/hello');
-    });
-  });
-  MQ.client.on('reconnect', () => { $('mqtt-state').textContent = 'mất kết nối, đang thử lại...'; });
-  MQ.client.on('error', (e) => { $('mqtt-state').textContent = `lỗi: ${e.message}`; log(`MQTT lỗi: ${e.message}`, 'err'); });
-  MQ.client.on('close', () => { if (!MQ.client || MQ.client.disconnecting) $('mqtt-state').textContent = 'đã ngắt'; });
-  MQ.client.on('message', (topic, buf) => {
-    const parts = topic.split('/'); // memora/capture/{device}/{kind}
-    const device = parts[2]; const kind = parts[3];
-    let p; try { p = JSON.parse(new TextDecoder().decode(buf)); } catch { log(`MQTT ${topic}: JSON lỗi`, 'err'); return; }
-    const f = { t: kind, d: device, p };
-    addFrame('in', f);
-    if (!$('ser-device').value.trim()) $('ser-device').value = device;
-    if (kind === 'hello') $('mqtt-state').textContent = `thiết bị ${device} online ${JSON.stringify(p).slice(0, 80)}`;
-    if (kind === 'attempts') {
-      onAttempt(f);
-      if ($('mqtt-auto').checked && p.nonce) autoResult(device, p);
-    }
-  });
-};
-$('mqtt-disconnect').onclick = () => {
-  if (MQ.client) { MQ.client.end(true); MQ.client = null; }
-  $('mqtt-connect').disabled = false; $('mqtt-disconnect').disabled = true; $('mqtt-state').textContent = 'đã ngắt';
-};
-/** Emulates Operations PERSO-007: every image is kept PENDING_REVIEW; attemptNo counts per session on this page. */
-const autoCount = {};
-function autoResult(device, a) {
-  const sid = a.sessionId || $('ser-session').value.trim();
-  autoCount[sid] = (autoCount[sid] || 0) + 1;
-  const n = autoCount[sid]; $('ser-attempt').value = n;
-  const hasImage = typeof a.imageBase64 === 'string' && a.imageBase64.length > 0;
-  publish(device, 'results', hasImage
-    ? { sessionId: sid, nonce: a.nonce, ok: true, attemptNo: n, result: 'PENDING_REVIEW',
-      suggestion: Number(a.qualityScore) >= 50 ? 'PASS' : 'LOW_QUALITY', remainingAttempts: Math.max(0, 3 - n), sessionStatus: 'IN_PROGRESS' }
-    : { sessionId: sid, nonce: a.nonce, ok: true, attemptNo: n, result: 'REJECTED', reason: 'CAPTURE_FAILED',
-      remainingAttempts: Math.max(0, 3 - n), sessionStatus: 'IN_PROGRESS' });
-}
-function publish(device, kind, payload) {
-  if (!MQ.client || !MQ.client.connected) { log('Chưa kết nối MQTT.', 'err'); return; }
-  if (!device) { log('Thiếu deviceCode (ô d).', 'err'); return; }
-  MQ.client.publish(`memora/capture/${device}/${kind}`, JSON.stringify(payload), { qos: 1, retain: false });
-  addFrame('out', { t: kind, d: device, p: payload });
-}
-
 async function sendFrame(kind, payload) {
   const t = kind === 'start' || kind === 'next' || kind === 'end' ? 'commands' : kind;
-  if (mode() === 'mqtt') {
-    if (kind === 'ping') { log('MQTT không có ping: thiết bị báo online bằng hello.'); return; }
-    if (kind === 'start') delete autoCount[(payload || {}).sessionId];
-    publish($('ser-device').value.trim(), t, payload ?? {});
-    return;
-  }
   if (!SER.open || !SER.port.writable) { if (kind !== 'ping') log('Chưa kết nối serial.', 'err'); return; }
   const frame = { t, d: $('ser-device').value.trim(), p: payload ?? {} };
   const w = SER.port.writable.getWriter();
@@ -679,7 +609,7 @@ async function sendFrame(kind, payload) {
 for (const b of document.querySelectorAll('.ser-send')) {
   b.onclick = () => {
     let sessionId = $('ser-session').value.trim(); const attemptNo = Number($('ser-attempt').value);
-    if (!sessionId && b.dataset.kind === 'start') { sessionId = uuid(); $('ser-session').value = sessionId; } // test session without backend
+    if (!sessionId && b.dataset.kind === 'start') { sessionId = uuid(); $('ser-session').value = sessionId; }
     const s = S.session && S.session.sessionId === sessionId ? S.session : null;
     switch (b.dataset.kind) {
       case 'ping': return sendFrame('ping');

@@ -8,11 +8,123 @@
 </head>
 <body>
 <header class="top">
-  <h1>MEMORA Test UI <small>chỉ dùng local dev</small></h1>
-  <div id="cfg" class="muted">đang tải cấu hình...</div>
+  <div class="hdr-row">
+    <h1>MEMORA Test UI <small>chỉ dùng local dev</small></h1>
+    <div id="cfg" class="muted">đang tải cấu hình...</div>
+  </div>
+  <div class="hdr-row">
+    <label>Broker <input id="h-url" value="wss://mqtt.memora.style" size="24"></label>
+    <label>User <input id="h-user" value="memora-operations" size="16" autocomplete="off"></label>
+    <label>Mật khẩu <input id="h-pass" type="password" size="12" autocomplete="off"></label>
+    <button id="h-connect">Kết nối MQTT</button>
+    <button id="h-disconnect" class="secondary" disabled>Ngắt</button>
+    <span id="h-mqtt-state" class="pill">MQTT: chưa kết nối</span>
+  </div>
+  <div class="hdr-row">
+    <label>Thiết bị <input id="h-device" value="esp32-store-01" size="16" autocomplete="off"></label>
+    <span id="h-dev-state" class="pill">chưa thấy hello</span>
+    <button id="h-health" class="secondary">Kiểm tra worker</button>
+    <span id="h-worker" class="pill">worker: chưa kiểm tra</span>
+  </div>
+  <nav class="tabs">
+    <button class="active" data-tab="tab-fp">1. Vân tay (mô phỏng)</button>
+    <button data-tab="tab-sw">2. Soundwave (mô phỏng)</button>
+    <button data-tab="tab-adv">3. Nâng cao (qua backend)</button>
+  </nav>
 </header>
 
 <main>
+  <!-- Mock order shared by tabs 1 and 2 -->
+  <section class="card" id="order-card">
+    <h2>Đơn hàng mô phỏng <button id="order-new" class="secondary">Tạo đơn mới</button> <button id="order-clean" class="danger">Dọn dữ liệu test của đơn này</button> <span id="order-clean-msg" class="muted"></span></h2>
+    <div id="order-body"></div>
+  </section>
+
+  <!-- Tab 1: fingerprint simulation -->
+  <div id="tab-fp" class="tabpanel">
+    <section class="card">
+      <h2>Phiên lấy vân tay cho Item 1</h2>
+      <p class="hint">Trang đóng vai Gateway + Operations: tạo phiên, nhận <code>attempts</code> từ ESP32 qua MQTT, trả <code>results</code>, chạy worker cho từng lần quét. <b>Tắt operations-service</b> trong lúc test.</p>
+      <div class="row">
+        <label>Ngưỡng gợi ý PASS <input id="fp-threshold" type="number" min="0" max="1000" value="50" style="width:5em"></label>
+        <button id="s-create">Tạo phiên</button>
+        <button id="s-next" disabled>Lần tiếp theo</button>
+        <button id="s-cancel" class="danger" disabled>Kết thúc không chọn</button>
+      </div>
+      <div class="row">
+        <span id="s-status" class="badge">chưa có phiên</span>
+        <span>còn: <b id="s-countdown">--:--</b></span>
+        <span>lần quét: <b id="s-used">0/3</b></span>
+        <span class="muted">sessionId: <code id="s-id">-</code></span>
+      </div>
+      <div id="s-msg" class="hint"></div>
+      <div id="fp-cards" class="cards"></div>
+      <h3>Xem trên SIGNET_001_FP</h3>
+      <div id="fp-3d"><button id="fp-3d-open" type="button">Xem trên SIGNET_001_FP</button> <span id="fp-3d-msg" class="muted">dùng bản được chọn, nếu chưa chọn thì lần quét mới nhất đã xử lý xong</span></div>
+      <div class="row"><h3 style="margin:0">Dòng thời gian</h3><button id="tl-clear" class="secondary">Xóa</button></div>
+      <div id="tl" class="frames"></div>
+    </section>
+  </div>
+
+  <!-- Tab 2: soundwave simulation -->
+  <div id="tab-sw" class="tabpanel" hidden>
+    <section class="card">
+      <h2>Soundwave cho Item 2</h2>
+      <div class="row">
+        <input type="file" id="sw2-file" accept="audio/*,.wav,.mp3,.m4a,.aac">
+        <button id="sw2-rec" class="secondary">Ghi âm</button>
+        <button id="sw2-stop" class="secondary" disabled>Dừng</button>
+        <span id="sw2-timer" class="muted"></span>
+      </div>
+      <h3>Kiểu hiển thị WAVECODE <button id="sw2-styles-reload" class="secondary" type="button">Tải lại danh sách</button></h3>
+      <div id="sw2-styles" class="stylecards"><span class="muted">đang tải kiểu...</span></div>
+      <div class="row"><button id="sw2-accept" type="button" disabled>Chấp nhận kiểu này</button> <span class="muted">giữ kiểu đang chọn, xóa file của các kiểu khác (select-wavecode-style)</span></div>
+      <div id="sw2-style-msg" class="muted">Chọn kiểu trước khi xử lý. Sau khi xử lý xong, bấm kiểu khác để vẽ lại cùng levels (render-wavecode).</div>
+      <div id="sw2-meta" class="muted">chưa có audio (3000..30000 ms)</div>
+      <audio id="sw2-audio" controls hidden></audio>
+      <canvas id="sw2-wave" width="900" height="110" hidden></canvas>
+      <div class="row">
+        <label>segmentStartMs <input id="sw2-start" type="number" min="0" step="50" value="0" style="width:7em"></label>
+        <span class="muted">(kéo trên sóng để dời cửa sổ 3 s)</span>
+        <button id="sw2-play-sel" class="secondary" disabled>Nghe 3 s đã chọn</button>
+        <button id="sw2-run" disabled>Xử lý</button>
+        <button id="sw2-reseg" class="secondary" disabled>Xử lý lại với đoạn mới</button>
+        <span id="sw2-reseg-count" class="muted">lần chọn lại: 0/10</span>
+        <button id="sw2-resume" class="secondary" type="button">Tải lại từ Garage</button>
+        <span id="sw2-state" class="muted"></span>
+      </div>
+      <div id="sw2-resume-list" class="tablewrap"></div>
+      <div id="sw2-result" hidden>
+        <h3>Kết quả worker</h3>
+        <div id="sw2-info" class="muted"></div>
+        <div id="sw2-paths" class="path"></div>
+        <div class="legend"><i class="ref"></i> bar tham chiếu <i class="chk"></i> bar kiểm tra <i class="dat"></i> bar dữ liệu</div>
+        <div id="sw2-bars" class="wcode"></div>
+        <div id="sw2-levels" class="muted"></div>
+        <div class="previews">
+          <figure><figcaption>alpha PNG</figcaption><img id="sw2-png" alt="" class="checker"></figure>
+          <figure><figcaption>SVG</figcaption><img id="sw2-svg" alt="" class="checker"></figure>
+          <figure><figcaption>audio_segment.wav</figcaption><audio id="sw2-seg" controls></audio></figure>
+        </div>
+        <h3>Xem 3D trên BAR_001_SW</h3>
+        <div id="sw2-3d"><button id="sw2-3d-open" type="button">Mở xem 3D</button> <span class="muted">cần Internet (three.js từ jsDelivr)</span></div>
+        <h3>Ứng viên nudge</h3>
+        <div id="sw2-nudge" class="tablewrap"></div>
+        <div id="sw2-render" hidden>
+          <h3>Mã đã render lại</h3>
+          <div id="sw2-rpaths" class="path"></div>
+          <div id="sw2-rbars" class="wcode"></div>
+          <div class="previews">
+            <figure><figcaption>render PNG</figcaption><img id="sw2-rpng" alt="" class="checker"></figure>
+            <figure><figcaption>render SVG</figcaption><img id="sw2-rsvg" alt="" class="checker"></figure>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Tab 3: original sections A-H -->
+  <div id="tab-adv" class="tabpanel" hidden>
   <!-- A. Accounts -->
   <section class="card" id="sec-accounts">
     <h2>A. Tài khoản</h2>
@@ -187,22 +299,9 @@
 
   <!-- H. ESP32 -->
   <section class="card" id="sec-serial">
-    <h2>H. ESP32-S3 qua MQTT hoặc USB</h2>
-    <p class="hint"><b>MQTT:</b> trang đóng vai Operations: nhận <code>attempts</code> / <code>hello</code>, gửi <code>commands</code> / <code>results</code> qua broker. <b>Tắt operations-service</b> (server và local) trong lúc test, nếu không cả hai cùng trả lời thiết bị. Thiết bị phải ở chế độ MQTT và đã vào Wi-Fi. <b>USB:</b> frame <code>@MEMORA</code> qua Web Serial (Chrome / Edge).</p>
-    <div class="row">
-      <label>Kênh
-        <select id="tr-mode"><option value="mqtt" selected>MQTT</option><option value="usb">USB (Web Serial)</option></select></label>
-    </div>
-    <div class="row" id="mqtt-row">
-      <label>Broker <input id="mqtt-url" value="wss://mqtt.memora.style" size="26"></label>
-      <label>User <input id="mqtt-user" value="memora-operations" size="18" autocomplete="off"></label>
-      <label>Mật khẩu <input id="mqtt-pass" type="password" size="18" autocomplete="off"></label>
-      <button id="mqtt-connect">Kết nối MQTT</button>
-      <button id="mqtt-disconnect" class="secondary" disabled>Ngắt</button>
-      <label class="inline"><input type="checkbox" id="mqtt-auto" checked> tự trả results PENDING_REVIEW</label>
-      <span id="mqtt-state" class="muted">chưa kết nối</span>
-    </div>
-    <div class="row" id="usb-row" hidden>
+    <h2>H. ESP32-S3 qua USB (Web Serial)</h2>
+    <p class="hint">Frame <code>@MEMORA</code> qua Web Serial (Chrome / Edge). MQTT nằm ở thanh trên cùng và tab 1.</p>
+    <div class="row" id="usb-row">
       <label>Baud
         <select id="ser-baud"><option>921600</option><option>460800</option><option>230400</option><option>115200</option></select>
       </label>
@@ -233,7 +332,7 @@
     </div>
     <div class="grid2">
       <div>
-        <h3>Frame (MQTT / @MEMORA)</h3>
+        <h3>Frame (@MEMORA)</h3>
         <div id="ser-frames" class="frames"></div>
       </div>
       <div>
@@ -247,6 +346,7 @@
       <button id="ser-to-worker" class="secondary">Xử lý ảnh này bằng worker (mục G)</button>
     </div>
   </section>
+  </div>
 </main>
 
 <footer>
@@ -255,5 +355,7 @@
 </footer>
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="app.js"></script>
+<script src="ring3d.js"></script>
+<script src="sim.js"></script>
 </body>
 </html>

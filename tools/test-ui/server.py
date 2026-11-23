@@ -9,6 +9,12 @@ Routes:
     /worker/*         proxy to the Python worker, adds X-Memora-Worker-Secret
     /dev/presign      short-lived presigned GET for personalization/* objects
     /dev/upload-raw   put a local file under personalization/test-ui/ in the bucket
+                      (optional explicit ?key= must also live under that prefix)
+    /dev/delete-prefix POST ?prefix=personalization/test-ui/... deletes every object under it
+    /dev/list         GET ?prefix=personalization/test-ui/... lists up to 1000 keys (key, size, lastModified)
+    /dev/object       GET ?key=personalization/... streams an object from the bucket (same origin, no CORS)
+    /models/<NAME>.glb and /models/<NAME>/template.json
+                      read-only 3D model files from MODELS_DIR (NAME matches ^[A-Z0-9_]+$)
     /dev/config       non-secret configuration summary
 
 Binds 127.0.0.1 only. Secrets are read from the worker .env and never sent to the browser.
@@ -21,6 +27,7 @@ import http.client
 import json
 import mimetypes
 import os
+import re
 import threading
 import uuid
 from email.parser import BytesParser
@@ -55,6 +62,11 @@ if not _worker_env_path.is_absolute():
 WORKER_ENV = {k: v for k, v in dotenv_values(_worker_env_path).items() if v is not None}
 
 MAX_UPLOAD_BYTES = 60 * 1024 * 1024
+# Read-only 3D models: <MODELS_DIR>/<NAME>/<NAME>.glb and <NAME>_template.json.
+MODELS_DIR = Path(
+    _cfg("MODELS_DIR", str(HERE.parent.parent.parent / "memora-3d"))
+).resolve()
+MODEL_NAME = re.compile(r"^[A-Z0-9_]+$")
 KEY_PREFIX = "personalization/"
 RAW_PREFIX = "personalization/test-ui/"
 
@@ -175,8 +187,16 @@ class Handler(BaseHTTPRequestHandler):
                 )
             elif path == "/dev/presign" and self.command == "GET":
                 self._presign(parse_qs(parts.query))
+            elif path == "/dev/object" and self.command == "GET":
+                self._object(parse_qs(parts.query))
+            elif path == "/dev/list" and self.command == "GET":
+                self._list(parse_qs(parts.query))
+            elif path.startswith("/models/"):
+                self._model(path)
             elif path == "/dev/upload-raw" and self.command == "POST":
                 self._upload_raw(parse_qs(parts.query))
+            elif path == "/dev/delete-prefix" and self.command == "POST":
+                self._delete_prefix(parse_qs(parts.query))
             elif path == "/dev/config" and self.command == "GET":
                 self._send_json(
                     200,
@@ -299,6 +319,149 @@ class Handler(BaseHTTPRequestHandler):
             ExpiresIn=300,
         )
         self._send_json(200, {"url": url})
+
+    # ------------------------------------------------------------ list keys under a test prefix
+    def _list(self, query: dict[str, list[str]]) -> None:
+        prefix = (query.get("prefix") or [""])[0]
+        if not (
+            prefix.startswith(RAW_PREFIX)
+            and len(prefix) <= 1024
+            and ".." not in prefix.split("/")
+            and "\\" not in prefix
+        ):
+            self._send_json(
+                400,
+                {
+                    "error": "invalid_prefix",
+                    "message": f"prefix must start with {RAW_PREFIX} (no .., max 1024 chars)",
+                },
+            )
+            return
+        if not WORKER_ENV.get("S3_BUCKET"):
+            self._send_json(503, {"error": "s3_not_configured"})
+            return
+        try:
+            page = _s3().list_objects_v2(
+                Bucket=WORKER_ENV["S3_BUCKET"], Prefix=prefix, MaxKeys=1000
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(
+                502, {"error": "list_failed", "message": type(exc).__name__}
+            )
+            return
+        keys = [
+            {
+                "key": o["Key"],
+                "size": o["Size"],
+                "lastModified": o["LastModified"].isoformat(),
+            }
+            for o in page.get("Contents", [])
+        ]
+        self._send_json(
+            200,
+            {
+                "prefix": prefix,
+                "keys": keys,
+                "truncated": bool(page.get("IsTruncated")),
+            },
+        )
+
+    # ------------------------------------------------------------ stream a bucket object
+    def _object(self, query: dict[str, list[str]]) -> None:
+        key = (query.get("key") or [""])[0]
+        if not (
+            key.startswith(KEY_PREFIX)
+            and len(key) <= 1024
+            and ".." not in key.split("/")
+            and "\\" not in key
+            and "//" not in key
+        ):
+            self._send_json(
+                400,
+                {
+                    "error": "invalid_key",
+                    "message": "key must start with personalization/ and not contain ..",
+                },
+            )
+            return
+        if not WORKER_ENV.get("S3_BUCKET"):
+            self._send_json(503, {"error": "s3_not_configured"})
+            return
+        try:
+            obj = _s3().get_object(Bucket=WORKER_ENV["S3_BUCKET"], Key=key)
+        except Exception as exc:  # noqa: BLE001
+            missing = "NoSuchKey" in type(exc).__name__ or "404" in str(exc)
+            self._send_json(404 if missing else 502, {"error": "object_unavailable"})
+            return
+        self.send_response(200)
+        self.send_header(
+            "Content-Type", obj.get("ContentType") or "application/octet-stream"
+        )
+        self.send_header("Content-Length", str(obj["ContentLength"]))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        for chunk in obj["Body"].iter_chunks(64 * 1024):
+            self.wfile.write(chunk)
+
+    # ------------------------------------------------------------ 3D models (read-only)
+    def _model(self, path: str) -> None:
+        glb = re.fullmatch(r"/models/([A-Z0-9_]+)\.glb", path)
+        tpl = re.fullmatch(r"/models/([A-Z0-9_]+)/template\.json", path)
+        if glb:
+            name, filename, ctype = (
+                glb.group(1),
+                f"{glb.group(1)}.glb",
+                "model/gltf-binary",
+            )
+        elif tpl:
+            name, filename = tpl.group(1), f"{tpl.group(1)}_template.json"
+            ctype = "application/json; charset=utf-8"
+        else:
+            self._send_json(404, {"error": "not_found"})
+            return
+        target = (MODELS_DIR / name / filename).resolve()
+        if not target.is_relative_to(MODELS_DIR) or not target.is_file():
+            self._send_json(404, {"error": "not_found"})
+            return
+        data = target.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    # ------------------------------------------------------------ delete by prefix
+    def _delete_prefix(self, query: dict[str, list[str]]) -> None:
+        prefix = (query.get("prefix") or [""])[0]
+        if not (
+            prefix.startswith(RAW_PREFIX)
+            and len(prefix) <= 1024
+            and ".." not in prefix.split("/")
+            and "\\" not in prefix
+        ):
+            self._send_json(
+                400,
+                {
+                    "error": "invalid_prefix",
+                    "message": f"prefix must start with {RAW_PREFIX} (no .., max 1024 chars)",
+                },
+            )
+            return
+        if not WORKER_ENV.get("S3_BUCKET"):
+            self._send_json(503, {"error": "s3_not_configured"})
+            return
+        bucket = WORKER_ENV["S3_BUCKET"]
+        deleted = 0
+        paginator = _s3().get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            keys = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if keys:
+                _s3().delete_objects(
+                    Bucket=bucket, Delete={"Objects": keys, "Quiet": True}
+                )
+                deleted += len(keys)
+        self._send_json(200, {"deleted": deleted})
 
     # ------------------------------------------------------------ raw upload
     def _upload_raw(self, query: dict[str, list[str]]) -> None:
