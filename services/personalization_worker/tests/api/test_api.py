@@ -95,12 +95,12 @@ def test_render_wavecode_response_shape(client, auth, store):
     assert set(envelope) == {"statusCode", "message", "data"}
     assert envelope["statusCode"] == 200 and envelope["message"] == "Wavecode rendered"
     data = envelope["data"]
-    assert set(data) == {"status", "processorVersion", "outputs", "wavecode"}
+    assert set(data) == {"status", "processorVersion", "outputs", "wavecode", "reused"}
     assert data["status"] == "READY"
     assert set(data["outputs"]) == {"vectorSvg", "alphaPng", "manifest"}
-    assert data["outputs"]["vectorSvg"]["key"] == PREFIX + "wavecode.svg"
-    assert data["outputs"]["alphaPng"]["widthPx"] == 2048
-    assert data["outputs"]["alphaPng"]["heightPx"] == 512
+    assert data["outputs"]["vectorSvg"]["key"] == PREFIX + "wavecode-classic.svg"
+    assert data["outputs"]["alphaPng"]["widthPx"] == 2125
+    assert data["outputs"]["alphaPng"]["heightPx"] == 500
     assert set(data["outputs"]["vectorSvg"]) == {"key", "sha256", "sizeBytes", "contentType"}
     wc = data["wavecode"]
     assert wc["scheme"] == "MEMORA_WAVECODE_v1"
@@ -108,9 +108,9 @@ def test_render_wavecode_response_shape(client, auth, store):
     assert wc["checkBars"] == [5, 5]
     assert wc["nudgeCandidates"] == []
     assert set(store) == {
-        PREFIX + n for n in ("wavecode.svg", "wavecode_alpha.png", "manifest.json")
+        PREFIX + n for n in ("wavecode-classic.svg", "wavecode-classic_alpha.png", "manifest.json")
     }
-    assert store[PREFIX + "wavecode.svg"][1] == "image/svg+xml"
+    assert store[PREFIX + "wavecode-classic.svg"][1] == "image/svg+xml"
 
 
 def test_config_validation():
@@ -266,3 +266,112 @@ def test_good_secret_bad_body_lists_fields(client, auth):
     r = client.post(path, json={"sourceId": "nope"}, headers=auth)
     assert_error(r, 400, "INVALID_REQUEST", path)
     assert r.json()["message"] == "Invalid request body: levels, outputPrefix, sourceId"
+
+
+CONTEXT = {
+    "orderId": "7d0a9c52-1b3e-4f6a-8c21-5e9d4b7a1f30",
+    "ringItemIds": ["c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f"],
+}
+
+
+def test_render_context_goes_into_manifest_and_is_kept(client, auth, store):
+    import json
+
+    body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS, "context": CONTEXT}
+    assert client.post("/v1/soundwave/render-wavecode", json=body, headers=auth).status_code == 200
+    manifest = json.loads(store[PREFIX + "manifest.json"][0])
+    assert manifest["context"] == CONTEXT
+    body.pop("context")
+    assert client.post("/v1/soundwave/render-wavecode", json=body, headers=auth).status_code == 200
+    assert json.loads(store[PREFIX + "manifest.json"][0])["context"] == CONTEXT
+
+
+def test_absent_context_is_omitted_from_manifest(client, auth, store):
+    import json
+
+    body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS}
+    assert client.post("/v1/soundwave/render-wavecode", json=body, headers=auth).status_code == 200
+    assert "context" not in json.loads(store[PREFIX + "manifest.json"][0])
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        {**CONTEXT, "extra": 1},
+        {**CONTEXT, "orderId": "nope"},
+        {**CONTEXT, "attemptNo": 4},
+        {**CONTEXT, "attemptNo": 0},
+        {**CONTEXT, "ringItemIds": [CONTEXT["ringItemIds"][0]] * 3},
+        {**CONTEXT, "sessionId": "x"},
+        {"sessionId": CONTEXT["orderId"]},
+    ],
+)
+def test_invalid_context_is_400(client, auth, store, context):
+    body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS, "context": context}
+    r = client.post("/v1/soundwave/render-wavecode", json=body, headers=auth)
+    assert_error(r, 400, "INVALID_REQUEST", "/v1/soundwave/render-wavecode")
+
+
+def _manifest(store):
+    import json
+
+    return json.loads(store[PREFIX + "manifest.json"][0])
+
+
+@pytest.mark.parametrize("style", ["CLASSIC", "HAIRLINE", "OSCILLOSCOPE"])
+def test_render_style_in_response_manifest_and_svg(client, auth, store, style):
+    body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS, "style": style}
+    r = client.post("/v1/soundwave/render-wavecode", json=body, headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["wavecode"]["style"] == style
+    assert _manifest(store)["wavecode"]["style"] == style
+    assert f'data-style="{style}"' in store[PREFIX + f"wavecode-{style.lower()}.svg"][0].decode()
+
+
+def test_render_default_style_is_classic(client, auth, store):
+    body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS}
+    r = client.post("/v1/soundwave/render-wavecode", json=body, headers=auth)
+    assert r.json()["data"]["wavecode"]["style"] == "CLASSIC"
+
+
+def test_render_keeps_previous_style_when_omitted(client, auth, store):
+    body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS, "style": "HAIRLINE"}
+    assert client.post("/v1/soundwave/render-wavecode", json=body, headers=auth).status_code == 200
+    body.pop("style")
+    r = client.post("/v1/soundwave/render-wavecode", json=body, headers=auth)
+    assert r.json()["data"]["wavecode"]["style"] == "HAIRLINE"
+    assert _manifest(store)["wavecode"]["style"] == "HAIRLINE"
+    body["style"] = "OSCILLOSCOPE"
+    r = client.post("/v1/soundwave/render-wavecode", json=body, headers=auth)
+    assert r.json()["data"]["wavecode"]["style"] == "OSCILLOSCOPE"
+
+
+@pytest.mark.parametrize("path", ["/v1/soundwave/render-wavecode", "/v1/soundwave/process"])
+def test_invalid_style_is_400(client, auth, store, path):
+    if path.endswith("process"):
+        body = _sw(style="NEON")
+    else:
+        body = {"sourceId": SOURCE_ID, "outputPrefix": PREFIX, "levels": LEVELS, "style": "NEON"}
+    assert_error(client.post(path, json=body, headers=auth), 400, "INVALID_REQUEST", path)
+
+
+def test_presets_requires_secret(client):
+    r = client.get("/v1/soundwave/presets")
+    assert_error(r, 401, "UNAUTHORIZED", "/v1/soundwave/presets")
+
+
+def test_presets_lists_three_styles_with_sample_svg(client, auth):
+    r = client.get("/v1/soundwave/presets", headers=auth)
+    assert r.status_code == 200, r.text
+    data = r.json()["data"]
+    assert data["defaultStyle"] == "CLASSIC"
+    styles = {s["code"]: s for s in data["styles"]}
+    assert [s["code"] for s in data["styles"]] == ["CLASSIC", "HAIRLINE", "OSCILLOSCOPE"]
+    assert [s["name"] for s in data["styles"]] == ["Cổ điển", "Nét mảnh", "Sóng liền"]
+    assert styles["CLASSIC"]["decoder"] == styles["HAIRLINE"]["decoder"] == "BAR_HEIGHT"
+    assert styles["OSCILLOSCOPE"]["decoder"] == "PEAK_HEIGHT"
+    for code, s in styles.items():
+        assert set(s) == {"code", "name", "description", "decoder", "sampleSvg"}
+        assert s["description"]
+        assert s["sampleSvg"].startswith("<?xml") and f'data-style="{code}"' in s["sampleSvg"]
+        assert 'data-levels="3,5,6,4,2,1,4,6,7,5,3,2,4,5,6,3,2,1"' in s["sampleSvg"]

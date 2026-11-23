@@ -45,6 +45,14 @@ def segment_out_of_range(message: str) -> WorkerError:
     return WorkerError(422, "SEGMENT_OUT_OF_RANGE", message)
 
 
+def style_not_generated(style: str) -> WorkerError:
+    return WorkerError(
+        422,
+        "STYLE_NOT_GENERATED",
+        f"Wavecode style {style} has not been generated for this source.",
+    )
+
+
 def storage_unavailable() -> WorkerError:
     return WorkerError(503, "STORAGE_UNAVAILABLE", "Object storage is unavailable.")
 

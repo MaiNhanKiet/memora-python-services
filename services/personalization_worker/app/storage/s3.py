@@ -81,6 +81,32 @@ def put_object(key: str, data: bytes, content_type: str) -> StoredObject:
     return StoredObject(key=key, sha256=digest, sizeBytes=len(data), contentType=content_type)
 
 
+def object_exists(key: str) -> bool:
+    try:
+        _client().head_object(Bucket=get_settings().s3_bucket, Key=key)
+        return True
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in _NOT_FOUND_CODES:
+            return False
+        raise storage_unavailable() from exc
+    except (BotoCoreError, OSError) as exc:
+        raise storage_unavailable() from exc
+
+
+def delete_object(key: str) -> None:
+    """Delete one object; a missing key is not an error (S3 delete is idempotent)."""
+    try:
+        _client().delete_object(Bucket=get_settings().s3_bucket, Key=key)
+    except (ClientError, BotoCoreError, OSError) as exc:
+        raise storage_unavailable() from exc
+
+
+def delete_objects(keys: list[str]) -> None:
+    for key in keys:
+        delete_object(key)
+
+
 def check() -> bool:
     try:
         _client().head_bucket(Bucket=get_settings().s3_bucket)

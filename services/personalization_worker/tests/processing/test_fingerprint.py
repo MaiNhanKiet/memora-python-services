@@ -94,3 +94,19 @@ def test_missing_potrace_is_503(client, auth, store, monkeypatch):
     r = client.post("/v1/fingerprint/process", json=BODY, headers=auth)
     assert r.status_code == 503
     assert r.json()["code"] == "TOOL_UNAVAILABLE"
+
+
+@needs_potrace
+def test_context_is_copied_into_manifest(client, auth, store):
+    ok, bmp = cv2.imencode(".bmp", synthetic_fingerprint())
+    assert ok
+    store[RAW] = (bmp.tobytes(), "image/bmp")
+    context = {
+        "orderId": "7d0a9c52-1b3e-4f6a-8c21-5e9d4b7a1f30",
+        "sessionId": "b2c4e6a8-0f1d-4a3b-9c5e-7d8f1a2b3c4d",
+        "attemptNo": 2,
+        "ringItemIds": ["c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f"],
+    }
+    r = client.post("/v1/fingerprint/process", json={**BODY, "context": context}, headers=auth)
+    assert r.status_code == 200, r.text
+    assert json.loads(store[PREFIX + "manifest.json"][0])["context"] == context

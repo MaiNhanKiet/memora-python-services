@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 T = TypeVar("T")
 
@@ -23,8 +23,34 @@ def check_key(value: str) -> str:
     return value
 
 
+class RequestContext(BaseModel):
+    """Opaque business context echoed verbatim into manifest.json (never used for processing)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    orderId: str
+    sessionId: str | None = None
+    attemptNo: int | None = Field(default=None, ge=1, le=3)
+    ringItemIds: list[str] | None = Field(default=None, max_length=2)
+
+    @field_validator("orderId", "sessionId")
+    @classmethod
+    def _uuid(cls, value: str | None) -> str | None:
+        if value is not None:
+            uuid.UUID(value)
+        return value
+
+    @field_validator("ringItemIds")
+    @classmethod
+    def _ring_items(cls, value: list[str] | None) -> list[str] | None:
+        for item in value or []:
+            uuid.UUID(item)
+        return value
+
+
 class SourceRequest(BaseModel):
     sourceId: str
+    context: RequestContext | None = None
 
     @field_validator("sourceId")
     @classmethod

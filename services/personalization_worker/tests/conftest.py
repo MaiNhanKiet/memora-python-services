@@ -67,6 +67,19 @@ def store(monkeypatch) -> dict[str, tuple[bytes, str]]:
         objects[key] = (data, content_type)
         return storage.StoredObject(key, hashlib.sha256(data).hexdigest(), len(data), content_type)
 
+    def object_exists(key: str) -> bool:
+        return key in objects
+
+    def delete_object(key: str) -> None:
+        objects.pop(key, None)
+
+    def delete_objects(keys: list[str]) -> None:
+        for key in keys:
+            delete_object(key)
+
+    monkeypatch.setattr(storage, "object_exists", object_exists)
+    monkeypatch.setattr(storage, "delete_object", delete_object)
+    monkeypatch.setattr(storage, "delete_objects", delete_objects)
     monkeypatch.setattr(storage, "get_object", get_object)
     monkeypatch.setattr(storage, "get_object_optional", get_object_optional)
     monkeypatch.setattr(storage, "put_object", put_object)

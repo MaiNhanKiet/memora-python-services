@@ -322,6 +322,8 @@ def run(req: FingerprintRequest) -> FingerprintResponse:
         "artwork": artwork,
         "quality": art.quality,
     }
+    if req.context is not None:
+        manifest_doc["context"] = req.context.model_dump(exclude_none=True)
     manifest_out = storage.put_object(
         req.outputPrefix + "manifest.json",
         json.dumps(manifest_doc, indent=2).encode("utf-8"),

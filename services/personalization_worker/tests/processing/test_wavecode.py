@@ -1,6 +1,8 @@
 import io
+import re
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from app.processing import wavecode
@@ -52,19 +54,140 @@ def test_nudge_stays_in_range():
         assert all(0 <= v <= 7 for v in c)
 
 
-def test_svg_geometry():
+def _rects(svg):
+    return [
+        tuple(float(v) for v in m)
+        for m in re.findall(
+            r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"', svg
+        )
+    ]
+
+
+def test_svg_canvas_and_laser_friendly():
     _, bars = wavecode.build_bars(LEVELS)
     svg = wavecode.render_svg(bars)
-    assert 'viewBox="0 0 8.2912 2.0"' in svg
-    assert svg.count("<rect") == 23
-    assert 'width="0.16"' in svg and 'rx="0.08"' in svg
-    # first bar: level 7 -> full height 2.0 starting at y=0
-    assert '<rect x="0.0000" y="0.0000" width="0.16" height="2.0000"' in svg
+    assert 'viewBox="0 0 8.5 2.0"' in svg
+    assert 'width="8.5mm"' in svg and 'height="2.0mm"' in svg
+    assert "<title>MEMORA_WAVECODE_v1</title>" in svg
+    assert 'data-levels="' + ",".join(map(str, LEVELS)) + '"' in svg
+    assert svg.count('fill="') == 1 and 'fill="#000"' in svg
+    for banned in ("stroke", "transform", "opacity", "gradient", "filter"):
+        assert banned not in svg
 
 
-def test_png_is_transparent_2048x512():
+def test_svg_bar_geometry_matches_spec():
+    _, bars = wavecode.build_bars(LEVELS)
+    svg = wavecode.render_svg(bars)
+    assert svg.count("<rect") == 24
+    rects = _rects(svg)
+    line, bar_rects = rects[0], rects[1:]
+    assert len(bar_rects) == 23
+    offset = (8.5 - 8.2912) / 2
+    for i, (x, y, w, h) in enumerate(bar_rects):
+        height = wavecode.LEVEL_HEIGHTS_MM[bars[i]]
+        assert x == pytest.approx(offset + i * 0.3696, abs=1e-4)
+        assert w == 0.16
+        assert h == pytest.approx(height, abs=1e-4)
+        assert y + h / 2 == pytest.approx(1.0, abs=1e-4)  # mirrored about the centre line
+    assert 'rx="0.0800"' in svg
+    # first bar: level 7 -> full height starting at y=0; last bar ends at offset + 8.2912
+    assert bar_rects[0][1] == 0.0 and bar_rects[0][3] == 2.0
+    assert bar_rects[22][0] + bar_rects[22][2] == pytest.approx(offset + 8.2912, abs=1e-4)
+    # centre line: 0.08 mm, spans left edge of bar 0 to right edge of bar 22
+    assert line[0] == pytest.approx(offset, abs=1e-4)
+    assert line[2] == pytest.approx(8.2912, abs=1e-4)
+    assert line[3] == 0.08 and line[1] == pytest.approx(0.96, abs=1e-4)
+    assert 'rx="0.0400"' in svg
+
+
+def test_png_is_transparent_2125x500():
     _, bars = wavecode.build_bars(LEVELS)
     img = Image.open(io.BytesIO(wavecode.render_png(bars)))
-    assert img.size == (2048, 512) and img.mode == "RGBA"
+    assert img.size == (2125, 500) and img.mode == "RGBA"
+    assert wavecode.PNG_WIDTH / wavecode.PNG_HEIGHT == pytest.approx(8.5 / 2.0)
+    for corner in ((0, 0), (2124, 0), (0, 499), (2124, 499)):
+        assert img.getpixel(corner)[3] == 0
+    offset = (8.5 - 8.2912) / 2
+    for i, level in enumerate(bars):
+        cx = round((offset + i * 0.3696 + 0.08) * 250)
+        px = img.getpixel((cx, 250))
+        assert px[3] == 255 and px[:3] == (0, 0, 0)
+        half = wavecode.LEVEL_HEIGHTS_MM[level] / 2 * 250
+        top = round(250 - half) - 4
+        if top >= 0:
+            assert img.getpixel((cx, top))[3] == 0  # just above the bar top
+
+
+STYLE_ROOT = ('viewBox="0 0 8.5 2.0"', 'width="8.5mm"', 'height="2.0mm"')
+
+
+@pytest.mark.parametrize("style", ["CLASSIC", "HAIRLINE", "OSCILLOSCOPE"])
+def test_every_style_svg_root_and_png(style):
+    _, bars = wavecode.build_bars(LEVELS)
+    svg = wavecode.render_svg(bars, style=style)
+    for part in STYLE_ROOT:
+        assert part in svg
+    assert f'data-style="{style}"' in svg
+    assert "<title>MEMORA_WAVECODE_v1</title>" in svg
+    assert 'data-levels="' + ",".join(map(str, LEVELS)) + '"' in svg
+    img = Image.open(io.BytesIO(wavecode.render_png(bars, style)))
+    assert img.size == (2125, 500) and img.mode == "RGBA"
     assert img.getpixel((0, 0))[3] == 0
-    assert img.getpixel((20, 256))[3] > 200  # centre of the first bar
+
+
+def test_default_style_is_classic():
+    _, bars = wavecode.build_bars(LEVELS)
+    assert wavecode.render_svg(bars) == wavecode.render_svg(bars, style="CLASSIC")
+    assert 'data-style="CLASSIC"' in wavecode.render_svg(bars)
+
+
+def test_hairline_has_thin_bars_and_no_centre_line():
+    _, bars = wavecode.build_bars(LEVELS)
+    svg = wavecode.render_svg(bars, style="HAIRLINE")
+    rects = _rects(svg)
+    assert svg.count("<rect") == 23 and len(rects) == 23
+    offset = (8.5 - 8.2912) / 2
+    for i, (x, _y, w, h) in enumerate(rects):
+        assert w == 0.1
+        assert x + w / 2 == pytest.approx(offset + 0.08 + i * 0.3696, abs=1e-4)
+        assert h == pytest.approx(wavecode.LEVEL_HEIGHTS_MM[bars[i]], abs=1e-4)
+    assert 'rx="0.0500"' in svg and "polyline" not in svg
+
+
+def test_classic_has_23_rects_and_centre_line():
+    _, bars = wavecode.build_bars(LEVELS)
+    assert wavecode.render_svg(bars, style="CLASSIC").count("<rect") == 24
+
+
+def test_oscilloscope_is_one_alternating_polyline():
+    _, bars = wavecode.build_bars(LEVELS)
+    svg = wavecode.render_svg(bars, style="OSCILLOSCOPE")
+    assert svg.count("<polyline") == 1 and "<rect" not in svg
+    for attr in (
+        'fill="none"',
+        'stroke-width="0.09"',
+        'stroke-linejoin="round"',
+        'stroke-linecap="round"',
+    ):
+        assert attr in svg
+    raw = re.search(r'points="([^"]+)"', svg).group(1)
+    pts = [tuple(float(v) for v in p.split(",")) for p in raw.split()]
+    assert len(pts) == 25
+    centre0 = (8.5 - 8.2912) / 2 + 0.08
+    assert pts[0] == pytest.approx((centre0 - 0.15, 1.0), abs=1e-4)
+    assert pts[-1][1] == 1.0
+    assert pts[-1][0] == pytest.approx(centre0 + 22 * 0.3696 + 0.15, abs=1e-4)
+    for i, level in enumerate(bars):
+        x, y = pts[i + 1]
+        half = wavecode.LEVEL_HEIGHTS_MM[level] / 2
+        assert x == pytest.approx(centre0 + i * 0.3696, abs=1e-4)
+        assert y == pytest.approx(1.0 - half if i % 2 == 0 else 1.0 + half, abs=1e-4)
+
+
+def test_sample_svg_matches_reference_points():
+    svg = wavecode.sample_svg("OSCILLOSCOPE")
+    assert 'points="0.0344,1 0.1844,0 0.554,1.5429 0.9236,0.2286' in svg
+    assert svg.endswith(
+        '8.3156,0 8.4656,1" fill="none" stroke="#000" stroke-width="0.09" '
+        'stroke-linejoin="round" stroke-linecap="round"/></svg>\n'
+    )
