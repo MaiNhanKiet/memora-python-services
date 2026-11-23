@@ -59,6 +59,29 @@
       </div>
       <div id="s-msg" class="hint"></div>
       <div id="fp-cards" class="cards"></div>
+      <h3>Thiết kế vân tay (khách) <button id="fd-resume" class="secondary" type="button">Tải lại từ Garage</button></h3>
+      <div id="fd-resume-list" class="tablewrap"></div>
+      <div id="fd-panel" hidden>
+        <div class="muted">Sau khi nhân viên chọn một lần quét: chọn khung, kéo để dời, cuộn hoặc kéo thanh để zoom, dùng chế độ Tẩy để xóa nốt đen (tối đa 15 % nét vân), rồi Xử lý để tạo bản mới.</div>
+        <div id="fd-frames" class="stylecards"><span class="muted">đang tải khung...</span></div>
+        <div class="row">
+          <canvas id="fd-canvas" width="640" height="640" class="checker" style="max-width:100%;border:1px solid var(--line);touch-action:none"></canvas>
+          <div class="fd-side">
+            <div class="row"><button id="fd-mode-move" type="button" class="secondary" aria-pressed="true">Dời khung</button><button id="fd-mode-erase" type="button" class="secondary" aria-pressed="false">Tẩy</button></div>
+            <label>Zoom <input id="fd-zoom" type="range" min="1" max="3" step="0.05" value="1"></label>
+            <label>Cỡ cọ <input id="fd-brush" type="range" min="0.005" max="0.1" step="0.005" value="0.03"></label>
+            <span id="fd-brush-label" class="muted"></span>
+            <div class="row"><button id="fd-undo" type="button" class="secondary">Hoàn tác</button><button id="fd-redo" type="button" class="secondary">Làm lại</button><button id="fd-clear" type="button" class="secondary">Xóa hết nét tẩy</button></div>
+            <div id="fd-readout" class="muted"></div>
+            <div class="row"><button id="fd-render" type="button">Xử lý</button><button id="fd-accept" type="button" class="secondary">Chấp nhận bản này</button></div>
+            <div id="fd-msg" class="muted"></div>
+          </div>
+        </div>
+        <h3>Các bản đã tạo</h3>
+        <div id="fd-versions" class="cards"></div>
+        <h3>Xem 3D bản đang dùng</h3>
+        <div id="fd-3d"><button id="fd-3d-open" type="button">Xem trên SIGNET_001_FP</button></div>
+      </div>
       <h3>Xem trên SIGNET_001_FP</h3>
       <div id="fp-3d"><button id="fp-3d-open" type="button">Xem trên SIGNET_001_FP</button> <span id="fp-3d-msg" class="muted">dùng bản được chọn, nếu chưa chọn thì lần quét mới nhất đã xử lý xong</span></div>
       <div class="row"><h3 style="margin:0">Dòng thời gian</h3><button id="tl-clear" class="secondary">Xóa</button></div>
@@ -347,6 +370,17 @@
     </div>
   </section>
   </div>
+  <section class="card" id="q3d-card">
+    <h2>Xem 3D: model tùy chọn + asset của item ở tab này</h2>
+    <div class="row">
+      <strong id="q3d-kind"></strong>
+      <label class="secondary">Model .glb từ máy (bỏ trống = model mặc định) <input id="q3d-glb" type="file" accept=".glb,model/gltf-binary"></label>
+      <label class="secondary">template.json (tùy chọn) <input id="q3d-tpl" type="file" accept=".json,application/json"></label>
+      <button id="q3d-show" type="button">Xem với asset đã chọn</button>
+      <span id="q3d-msg" class="muted"></span>
+    </div>
+    <div id="q3d"></div>
+  </section>
 </main>
 
 <footer>
@@ -356,6 +390,8 @@
 <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="app.js"></script>
 <script src="ring3d.js"></script>
+<script src="fpdesign.js"></script>
 <script src="sim.js"></script>
+<script src="quick3d.js"></script>
 </body>
 </html>

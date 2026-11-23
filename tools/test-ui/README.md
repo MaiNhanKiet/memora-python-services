@@ -85,7 +85,7 @@ Console log ở cuối trang ghi method, path, status, thời gian của mọi r
 
 **Kiểu hiển thị (tab 2):** mục "Kiểu hiển thị WAVECODE" luôn hiện, tải từ `GET /worker/v1/soundwave/presets` (mỗi thẻ: tên, code, mô tả, decoder, ảnh mẫu; kiểu mặc định chọn sẵn; nút "Tải lại danh sách"; worker lỗi thì hiện thẻ lỗi `code: message`). `style` được gửi trong `soundwave/process`. Sau khi xử lý xong, bấm thẻ kiểu khác để gọi `render-wavecode` với cùng levels, outputPrefix, context và cập nhật ảnh, nên so sánh được các kiểu trên một bản ghi mà không xử lý lại audio.
 
-**Xem 3D (`static/ring3d.js`):** nút "Mở xem 3D" dưới kết quả WAVECODE (tab 2) dựng `BAR_001_SW.glb` bằng three.js 0.147.0 tải từ `cdn.jsdelivr.net` (cần Internet), phủ `wavecode-{style}.svg` của kiểu hiện tại (qua `/dev/object`) lên mesh `ENGRAVE_SURFACE`. Vị trí, kích thước và `mm_per_uv` đọc từ template JSON, không hard-code. Nút: Tô đen (oxi hóa) / Khắc mờ / Ẩn mã, Cận mặt khắc / Toàn nhẫn, Lật ngang / Lật dọc. Tự cập nhật sau khi xử lý hoặc đổi kiểu. Tab 1 có nút "Xem trên SIGNET_001_FP": đặt `fingerprint_alpha.png` (bản được chọn, hoặc lần quét mới nhất đã xong) theo `packages.FINGERPRINT.default` (center, size_mm, rotation_deg) và `uv_origin_mm` / `mm_per_uv_unit`; ảnh được vừa khung size_mm giữ tỉ lệ. Hướng ảnh chưa kiểm bằng mắt, dùng nút Lật nếu ngược.
+**Xem 3D (`static/ring3d.js`):** nút "Mở xem 3D" dưới kết quả WAVECODE (tab 2) dựng `BAR_001_SW.glb` bằng three.js 0.147.0 tải từ `cdn.jsdelivr.net` (cần Internet), phủ `wavecode-{style}.svg` của kiểu hiện tại (qua `/dev/object`) lên mesh `ENGRAVE_SURFACE`. Vị trí, kích thước và `mm_per_uv` đọc từ template JSON, không hard-code. Nút: Oxi hóa / Khắc mờ / Khắc sâu / Ẩn mã, Cận mặt khắc / Toàn nhẫn, Lật ngang / Lật dọc. Tự cập nhật sau khi xử lý hoặc đổi kiểu. Tab 1 có nút "Xem trên SIGNET_001_FP": đặt `fingerprint_alpha.png` (bản được chọn, hoặc lần quét mới nhất đã xong) theo `packages.FINGERPRINT.default` (center, size_mm, rotation_deg) và `uv_origin_mm` / `mm_per_uv_unit`; ảnh được vừa khung size_mm giữ tỉ lệ. Hướng ảnh chưa kiểm bằng mắt, dùng nút Lật nếu ngược.
 
 Route thêm vào server (chỉ GET):
 
@@ -103,3 +103,19 @@ Route thêm vào server (chỉ GET):
 
 Route thêm: `GET /dev/list?prefix=` chỉ nhận prefix bắt đầu bằng `personalization/test-ui/`, không có đoạn `..`, không có `\`, tối đa 1024 ký tự (sai thì 400); trả tối đa 1000 key `{key, size, lastModified}` cùng `truncated`, chỉ đọc (list), dùng key S3 của worker.
 
+**Thiết kế vân tay (khách), tab 1 (`static/fpdesign.js`):** sau khi nhân viên bấm "Chọn lần này" (worker `fingerprint/process` tạo `base.png` và bản `v0` trong `selected/{sourceId}/`), panel "Thiết kế vân tay (khách)" hiện ra.
+
+- Khung: thẻ lấy từ `GET /worker/v1/fingerprint/presets` (NATURAL, CIRCLE, HEART, SQUARE, ảnh mẫu là biểu tượng viền). Lỗi hiện thẻ lỗi `code: message`.
+- Trình chỉnh sửa: canvas hiện `base.png` (qua `/dev/object`) dưới lớp phủ mờ của khung (viền NATURAL chỉ là ước lượng; worker mới fit theo vùng vân). Chế độ "Dời khung": kéo để đổi `offsetX/offsetY`; cuộn chuột hoặc thanh Zoom (1..3). Chế độ "Tẩy": vẽ nét trắng với cỡ cọ chỉnh được, có Hoàn tác / Làm lại / Xóa hết; nét lưu theo tọa độ chuẩn hóa 0..1 của `base.png` (tối đa 50 nét, 200 điểm mỗi nét).
+- "Xử lý" gọi `render-crop` với `versionId` mới (v1, v2, ...) và `context`; lỗi 422 (`ERASE_AREA_TOO_LARGE`, `FRAME_COVERAGE_TOO_LOW`) hiện `code: message`. Danh sách bản: ảnh nhỏ, khung, zoom, tỉ lệ tẩy, độ phủ, `minEngraveSizeMm`; "Dùng bản này" nạp lại khung/offset/zoom/nét tẩy của bản đó và cập nhật 3D. Tối đa 10 bản.
+- "Chấp nhận bản này" gọi `select-version`: các bản khác và `base.png` bị xóa, trình chỉnh sửa bị khóa.
+- "Xem trên SIGNET_001_FP" (panel và nút cũ) dùng PNG của bản đang dùng.
+- "Tải lại từ Garage" liệt kê `personalization/test-ui/fingerprint/{orderId}/selected/`, đọc manifest (`base`, `versions`, `currentVersionId`, `accepted`, `context`) và dựng lại; manifest đã chấp nhận thì khóa, và `base.png` không còn nên chỉ xem được các bản.
+
+## Xem 3D theo tab, chất liệu, đá và hiệu ứng khắc
+
+**Khung "Xem 3D" (`static/quick3d.js`):** đi theo tab đang mở (tab 1 = item vân tay, tab 2 = item Soundwave, tab 3 ẩn). Model: mặc định `SIGNET_001_FP` / `BAR_001_SW`, hoặc chọn file `.glb` từ máy (phải có mesh `ENGRAVE_SURFACE` có UV) và `template.json` tùy chọn (bỏ trống thì dùng template của model mặc định). Asset luôn là của item ở tab đó: wavecode SVG của kiểu hiện tại, hoặc `fingerprint_alpha.png` của bản thiết kế hiện tại / lần quét đã chọn / lần quét mới nhất đã xử lý.
+
+**Chất liệu và đá (`ring3d.js`):** đổi màu các material `MAT_SILVER_*` (Bạc 925, Vàng 18K/14K, Vàng hồng, Vàng trắng, Bạch kim, Titan đen; giữ khác biệt xước/bóng) và thay material của các mesh `GEMSTONE_*` (Kim cương/CZ, Ruby, Sapphire, Ngọc lục bảo, Thạch anh tím, Topaz, Đá hồng, Không gắn đá). Model không có `GEMSTONE_*` thì ô chọn đá bị tắt.
+
+**Hiệu ứng khắc (chỉ xem trước ở FE, không đổi file gửi máy khắc):** từ mask của asset dựng bump map (độ lõm, vách rãnh), roughness map (đáy rãnh mờ), color map có bóng trong rãnh và alpha map (chỉ vẽ vùng rãnh, phần còn lại giữ kim loại gốc), cùng một đèn chiếu xiên. Kiểu Oxi hóa / Khắc mờ / Khắc sâu chỉ khác thông số `FINISH`; vân tay làm mờ ít hơn wavecode để nét mảnh không nhòe. Kiểu khắc thật do thông số máy laser quyết định.

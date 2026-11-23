@@ -109,7 +109,7 @@
   };
   $('order-new').onclick = () => {
     order = freshOrder(); saveOrder(); thumbs.fp = null; thumbs.sw = null;
-    sess = null; $('fp-cards').replaceChildren(); swResetResult();
+    sess = null; $('fp-cards').replaceChildren(); swResetResult(); if (window.FpDesign) window.FpDesign.reset();
     setText('s-msg', ''); renderOrder(); updatePanel(); tl('note', `Tạo đơn mới ${order.orderId}`);
   };
 
@@ -191,7 +191,7 @@
     if (open()) { setText('s-msg', 'Phiên hiện tại còn mở: hãy chọn một lần hoặc kết thúc trước.'); return; }
     sess = { id: uuid(), device, expiresAt: Date.now() + TTL_MS, max: MAX_ATTEMPTS, used: 0, status: 'IN_PROGRESS', waiting: true, attempts: [], byNonce: new Map() };
     order.fpChosen = null; thumbs.fp = null; saveOrder();
-    $('fp-cards').replaceChildren(); setText('s-msg', '');
+    $('fp-cards').replaceChildren(); setText('s-msg', ''); if (window.FpDesign) window.FpDesign.reset();
     tl('staff', `Tạo phiên ${sess.id} cho ${device}, hết hạn ${new Date(sess.expiresAt).toISOString()}`);
     mqPublish(device, 'commands', startPayload());
     renderOrder(); updatePanel();
@@ -433,6 +433,7 @@
     tl('staff', `Chọn lần ${att.no}, nguồn ${sourceId}`);
     mqPublish(sess.device, 'commands', { type: 'end', sessionId: sess.id, status: 'COMPLETED', acceptedAttemptNo: att.no });
     att.previewDeleted = true; cleanupAttempt(att, true); // preview of the chosen attempt is no longer needed
+    if (window.FpDesign) window.FpDesign.open({ outputPrefix, sourceId, context });
     thumbs.fp = att.selected.svgKey ? await presign(att.selected.svgKey) : att.pngUrl;
     updatePanel(); renderOrder();
   }
@@ -798,11 +799,20 @@
 
   // ------------------------------------------------------------ tab 1: fingerprint on SIGNET_001_FP
   let fpViewer = null;
-  $('fp-3d-open').onclick = async () => {
+  function fpAssetKey() {
     const pool = (sess && sess.attempts) || [];
     const chosen = pool.find((a) => a.selected && a.selected.pngKey);
     const latest = [...pool].reverse().find((a) => a.data && a.data.outputs && a.data.outputs.alphaPng);
-    const key = chosen ? chosen.selected.pngKey : latest && latest.data.outputs.alphaPng.key;
+    return (window.FpDesign && window.FpDesign.currentPngKey()) || (chosen ? chosen.selected.pngKey : latest && latest.data.outputs.alphaPng.key);
+  }
+  // Selected assets of the simulated order item, for the quick 3D panel.
+  window.SimAssets = {
+    swKey: () => SW2.svgKey || null,
+    fpKey: () => fpAssetKey() || null,
+    url: (key) => objUrl(key),
+  };
+  $('fp-3d-open').onclick = async () => {
+    const key = fpAssetKey();
     if (!key) { setText('fp-3d-msg', 'chưa có fingerprint_alpha.png (quét và chờ worker xong trước).', 'err'); return; }
     setText('fp-3d-msg', 'đang dựng...', 'muted');
     try {
@@ -813,6 +823,7 @@
   };
 
   // ------------------------------------------------------------ boot
+  if (window.FpDesign) window.FpDesign.configure({ selectedPrefix: () => `${fpBase(order.orderId)}selected/` });
   loadPresets();
   $('sw2-styles-reload').onclick = loadPresets;
   renderOrder(); updatePanel(); health();
