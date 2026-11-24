@@ -1,0 +1,25 @@
+name: memora-python-services
+
+services:
+  personalization-worker:
+    image: ghcr.io/mainhankiet/memora-personalization-worker:${PERSONALIZATION_WORKER_TAG}
+    container_name: memora-personalization-worker
+    env_file:
+      - ./secrets/personalization-worker.env
+    networks:
+      - memora-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  memora-network:
+    external: true

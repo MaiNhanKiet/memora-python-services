@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MEMORA - Test UI (dev)</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="hdr-row">
+    <h1>MEMORA Test UI <small>chỉ dùng local dev</small></h1>
+    <div id="cfg" class="muted">đang tải cấu hình...</div>
+  </div>
+  <div class="hdr-row">
+    <label>Broker <input id="h-url" value="wss://mqtt.memora.style" size="24"></label>
+    <label>User <input id="h-user" value="memora-operations" size="16" autocomplete="off"></label>
+    <label>Mật khẩu <input id="h-pass" type="password" size="12" autocomplete="off"></label>
+    <button id="h-connect">Kết nối MQTT</button>
+    <button id="h-disconnect" class="secondary" disabled>Ngắt</button>
+    <span id="h-mqtt-state" class="pill">MQTT: chưa kết nối</span>
+  </div>
+  <div class="hdr-row">
+    <label>Thiết bị <input id="h-device" value="esp32-store-01" size="16" autocomplete="off"></label>
+    <span id="h-dev-state" class="pill">chưa thấy hello</span>
+    <button id="h-health" class="secondary">Kiểm tra worker</button>
+    <span id="h-worker" class="pill">worker: chưa kiểm tra</span>
+  </div>
+  <nav class="tabs">
+    <button class="active" data-tab="tab-fp">1. Vân tay (mô phỏng)</button>
+    <button data-tab="tab-sw">2. Soundwave (mô phỏng)</button>
+    <button data-tab="tab-adv">3. Nâng cao (qua backend)</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Mock order shared by tabs 1 and 2 -->
+  <section class="card" id="order-card">
+    <h2>Đơn hàng mô phỏng <button id="order-new" class="secondary">Tạo đơn mới</button> <button id="order-clean" class="danger">Dọn dữ liệu test của đơn này</button> <span id="order-clean-msg" class="muted"></span></h2>
+    <div id="order-body"></div>
+  </section>
+
+  <!-- Tab 1: fingerprint simulation -->
+  <div id="tab-fp" class="tabpanel">
+    <section class="card">
+      <h2>Phiên lấy vân tay cho Item 1</h2>
+      <p class="hint">Trang đóng vai Gateway + Operations: tạo phiên, nhận <code>attempts</code> từ ESP32 qua MQTT, trả <code>results</code>, chạy worker cho từng lần quét. <b>Tắt operations-service</b> trong lúc test.</p>
+      <div class="row">
+        <label>Ngưỡng gợi ý PASS <input id="fp-threshold" type="number" min="0" max="1000" value="50" style="width:5em"></label>
+        <button id="s-create">Tạo phiên</button>
+        <button id="s-next" disabled>Lần tiếp theo</button>
+        <button id="s-cancel" class="danger" disabled>Kết thúc không chọn</button>
+      </div>
+      <div class="row">
+        <span id="s-status" class="badge">chưa có phiên</span>
+        <span>còn: <b id="s-countdown">--:--</b></span>
+        <span>lần quét: <b id="s-used">0/3</b></span>
+        <span class="muted">sessionId: <code id="s-id">-</code></span>
+      </div>
+      <div id="s-msg" class="hint"></div>
+      <div id="fp-cards" class="cards"></div>
+      <h3>Thiết kế vân tay (khách) <button id="fd-resume" class="secondary" type="button">Tải lại từ Garage</button></h3>
+      <div id="fd-resume-list" class="tablewrap"></div>
+      <div id="fd-panel" hidden>
+        <div class="muted">Sau khi nhân viên chọn một lần quét: chọn khung, kéo để dời, cuộn hoặc kéo thanh để zoom, dùng chế độ Tẩy để xóa nốt đen (tối đa 15 % nét vân), rồi Xử lý để tạo bản mới.</div>
+        <div id="fd-frames" class="stylecards"><span class="muted">đang tải khung...</span></div>
+        <div class="row">
+          <canvas id="fd-canvas" width="640" height="640" class="checker" style="max-width:100%;border:1px solid var(--line);touch-action:none"></canvas>
+          <div class="fd-side">
+            <div class="row"><button id="fd-mode-move" type="button" class="secondary" aria-pressed="true">Dời khung</button><button id="fd-mode-erase" type="button" class="secondary" aria-pressed="false">Tẩy</button></div>
+            <label>Zoom <input id="fd-zoom" type="range" min="1" max="3" step="0.05" value="1"></label>
+            <label>Cỡ cọ <input id="fd-brush" type="range" min="0.005" max="0.1" step="0.005" value="0.03"></label>
+            <span id="fd-brush-label" class="muted"></span>
+            <div class="row"><button id="fd-undo" type="button" class="secondary">Hoàn tác</button><button id="fd-redo" type="button" class="secondary">Làm lại</button><button id="fd-clear" type="button" class="secondary">Xóa hết nét tẩy</button></div>
+            <div id="fd-readout" class="muted"></div>
+            <div class="row"><button id="fd-render" type="button">Xử lý</button><button id="fd-accept" type="button" class="secondary">Chấp nhận bản này</button></div>
+            <div id="fd-msg" class="muted"></div>
+          </div>
+        </div>
+        <h3>Các bản đã tạo</h3>
+        <div id="fd-versions" class="cards"></div>
+        <h3>Xem 3D bản đang dùng</h3>
+        <div id="fd-3d"><button id="fd-3d-open" type="button">Xem trên SIGNET_001_FP</button></div>
+      </div>
+      <h3>Xem trên SIGNET_001_FP</h3>
+      <div id="fp-3d"><button id="fp-3d-open" type="button">Xem trên SIGNET_001_FP</button> <span id="fp-3d-msg" class="muted">dùng bản được chọn, nếu chưa chọn thì lần quét mới nhất đã xử lý xong</span></div>
+      <div class="row"><h3 style="margin:0">Dòng thời gian</h3><button id="tl-clear" class="secondary">Xóa</button></div>
+      <div id="tl" class="frames"></div>
+    </section>
+  </div>
+
+  <!-- Tab 2: soundwave simulation -->
+  <div id="tab-sw" class="tabpanel" hidden>
+    <section class="card">
+      <h2>Soundwave cho Item 2</h2>
+      <div class="row">
+        <input type="file" id="sw2-file" accept="audio/*,.wav,.mp3,.m4a,.aac">
+        <button id="sw2-rec" class="secondary">Ghi âm</button>
+        <button id="sw2-stop" class="secondary" disabled>Dừng</button>
+        <span id="sw2-timer" class="muted"></span>
+      </div>
+      <h3>Kiểu hiển thị WAVECODE <button id="sw2-styles-reload" class="secondary" type="button">Tải lại danh sách</button></h3>
+      <div id="sw2-styles" class="stylecards"><span class="muted">đang tải kiểu...</span></div>
+      <div class="row"><button id="sw2-accept" type="button" disabled>Chấp nhận kiểu này</button> <span class="muted">giữ kiểu đang chọn, xóa file của các kiểu khác (select-wavecode-style)</span></div>
+      <div id="sw2-style-msg" class="muted">Chọn kiểu trước khi xử lý. Sau khi xử lý xong, bấm kiểu khác để vẽ lại cùng levels (render-wavecode).</div>
+      <div id="sw2-meta" class="muted">chưa có audio (3000..30000 ms)</div>
+      <audio id="sw2-audio" controls hidden></audio>
+      <canvas id="sw2-wave" width="900" height="110" hidden></canvas>
+      <div class="row">
+        <label>segmentStartMs <input id="sw2-start" type="number" min="0" step="50" value="0" style="width:7em"></label>
+        <span class="muted">(kéo trên sóng để dời cửa sổ 3 s)</span>
+        <button id="sw2-play-sel" class="secondary" disabled>Nghe 3 s đã chọn</button>
+        <button id="sw2-run" disabled>Xử lý</button>
+        <button id="sw2-reseg" class="secondary" disabled>Xử lý lại với đoạn mới</button>
+        <span id="sw2-reseg-count" class="muted">lần chọn lại: 0/10</span>
+        <button id="sw2-resume" class="secondary" type="button">Tải lại từ Garage</button>
+        <span id="sw2-state" class="muted"></span>
+      </div>
+      <div id="sw2-resume-list" class="tablewrap"></div>
+      <div id="sw2-result" hidden>
+        <h3>Kết quả worker</h3>
+        <div id="sw2-info" class="muted"></div>
+        <div id="sw2-paths" class="path"></div>
+        <div class="legend"><i class="ref"></i> bar tham chiếu <i class="chk"></i> bar kiểm tra <i class="dat"></i> bar dữ liệu</div>
+        <div id="sw2-bars" class="wcode"></div>
+        <div id="sw2-levels" class="muted"></div>
+        <div class="previews">
+          <figure><figcaption>alpha PNG</figcaption><img id="sw2-png" alt="" class="checker"></figure>
+          <figure><figcaption>SVG</figcaption><img id="sw2-svg" alt="" class="checker"></figure>
+          <figure><figcaption>audio_segment.wav</figcaption><audio id="sw2-seg" controls></audio></figure>
+        </div>
+        <h3>Xem 3D trên BAR_001_SW</h3>
+        <div id="sw2-3d"><button id="sw2-3d-open" type="button">Mở xem 3D</button> <span class="muted">cần Internet (three.js từ jsDelivr)</span></div>
+        <h3>Ứng viên nudge</h3>
+        <div id="sw2-nudge" class="tablewrap"></div>
+        <div id="sw2-render" hidden>
+          <h3>Mã đã render lại</h3>
+          <div id="sw2-rpaths" class="path"></div>
+          <div id="sw2-rbars" class="wcode"></div>
+          <div class="previews">
+            <figure><figcaption>render PNG</figcaption><img id="sw2-rpng" alt="" class="checker"></figure>
+            <figure><figcaption>render SVG</figcaption><img id="sw2-rsvg" alt="" class="checker"></figure>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Tab 3: original sections A-H -->
+  <div id="tab-adv" class="tabpanel" hidden>
+  <!-- A. Accounts -->
+  <section class="card" id="sec-accounts">
+    <h2>A. Tài khoản</h2>
+    <div class="grid2">
+      <div class="slot" data-slot="customer">
+        <h3>Khách hàng</h3>
+        <input class="email" type="email" placeholder="email" autocomplete="off">
+        <input class="password" type="password" placeholder="mật khẩu" autocomplete="off">
+        <div class="row">
+          <button class="login">Đăng nhập</button>
+          <button class="refresh secondary">Refresh</button>
+          <button class="logout secondary">Xóa token</button>
+        </div>
+        <div class="who muted">chưa đăng nhập</div>
+      </div>
+      <div class="slot" data-slot="staff">
+        <h3>Nhân viên</h3>
+        <input class="email" type="email" placeholder="email" autocomplete="off">
+        <input class="password" type="password" placeholder="mật khẩu" autocomplete="off">
+        <div class="row">
+          <button class="login">Đăng nhập</button>
+          <button class="refresh secondary">Refresh</button>
+          <button class="logout secondary">Xóa token</button>
+        </div>
+        <div class="who muted">chưa đăng nhập</div>
+      </div>
+    </div>
+    <p class="hint">Gọi <code>/api/v1/auth/login</code> qua proxy. Access token nằm trong sessionStorage; refresh cookie được proxy giữ trong bộ nhớ server theo từng tài khoản.</p>
+  </section>
+
+  <!-- B. Orders -->
+  <section class="card" id="sec-orders">
+    <h2>B. Đơn hàng</h2>
+    <div class="row">
+      <button id="orders-load">Tải đơn của tôi (khách hàng)</button>
+      <label>Order ID thủ công <input id="order-id" size="38" placeholder="uuid"></label>
+      <button id="order-use" class="secondary">Dùng</button>
+    </div>
+    <div id="orders-list" class="tablewrap"></div>
+    <h3>Ring item của đơn đã chọn</h3>
+    <div id="order-items" class="tablewrap muted">chưa chọn đơn</div>
+  </section>
+
+  <!-- C. Consent -->
+  <section class="card" id="sec-consent">
+    <h2>C. Consent (khách hàng)</h2>
+    <div class="row">
+      <label>Loại
+        <select id="consent-type">
+          <option>FINGERPRINT_PROCESSING</option>
+          <option>SOUNDWAVE_PROCESSING</option>
+        </select>
+      </label>
+      <label>policyVersion <input id="consent-policy" value="dev-1" size="10"></label>
+    </div>
+    <div class="row">
+      <span>Ring item:</span><span id="consent-items" class="checks muted">(chọn đơn ở mục B)</span>
+      <label>hoặc nhập id (cách nhau dấu phẩy) <input id="consent-items-manual" size="40"></label>
+    </div>
+    <div class="row">
+      <button id="consent-accept">Đồng ý (POST)</button>
+      <button id="consent-list" class="secondary">Danh sách</button>
+    </div>
+    <div id="consent-table" class="tablewrap"></div>
+  </section>
+
+  <!-- D. Capture session -->
+  <section class="card" id="sec-session">
+    <h2>D. Phiên lấy vân tay (nhân viên)</h2>
+    <div class="row">
+      <label>consentId <input id="sess-consent" size="38"></label>
+      <label>deviceCode <input id="sess-device" value="esp32-store-01" size="18"></label>
+      <button id="sess-create">Tạo phiên</button>
+    </div>
+    <div class="row">
+      <label>sessionId <input id="sess-id" size="38"></label>
+      <button id="sess-get" class="secondary">Tải</button>
+      <label class="inline"><input type="checkbox" id="sess-poll" checked> tự cập nhật mỗi 2 s</label>
+    </div>
+    <div class="row">
+      <button id="sess-next">Lần tiếp theo</button>
+      <button id="sess-close" class="danger">Kết thúc không chọn</button>
+    </div>
+    <div id="sess-info" class="muted">chưa có phiên</div>
+    <div id="sess-attempts" class="tablewrap"></div>
+  </section>
+
+  <!-- E. Sources -->
+  <section class="card" id="sec-sources">
+    <h2>E. Nguồn &amp; xử lý (khách hàng)</h2>
+    <div class="row">
+      <button id="src-list">Danh sách nguồn (PERSO-011)</button>
+      <label class="inline"><input type="checkbox" id="src-poll" checked> tự cập nhật tới READY / PROCESSING_FAILED</label>
+    </div>
+    <div id="src-table" class="tablewrap"></div>
+    <p class="hint">Backend chưa có API xem trước; khi READY hãy xem ảnh ở mục G (worker). PERSO-011/012 chưa có trong gateway hiện tại - lỗi 404 là bình thường.</p>
+  </section>
+
+  <!-- F. Soundwave -->
+  <section class="card" id="sec-sound">
+    <h2>F. Soundwave (khách hàng)</h2>
+    <div class="row">
+      <input type="file" id="sw-file" accept="audio/*">
+      <button id="sw-rec" class="secondary">Ghi âm</button>
+      <button id="sw-stop" class="secondary" disabled>Dừng</button>
+      <span id="sw-rec-state" class="muted"></span>
+    </div>
+    <audio id="sw-audio" controls hidden></audio>
+    <div id="sw-meta" class="muted">chưa chọn file</div>
+    <div class="row">
+      <label class="grow">Đoạn bắt đầu: <span id="sw-start-label">0</span> ms (cửa sổ 3000 ms)
+        <input type="range" id="sw-start" min="0" max="0" step="50" value="0" disabled></label>
+    </div>
+    <label>Body initiate (chỉnh được; hợp đồng PERSO-009 chưa chốt)
+      <textarea id="sw-body" rows="7" spellcheck="false"></textarea></label>
+    <div class="row">
+      <button id="sw-init">1. Initiate</button>
+      <button id="sw-put" class="secondary" disabled>2. PUT lên Garage</button>
+      <button id="sw-complete" class="secondary" disabled>3. Complete</button>
+    </div>
+    <div id="sw-state" class="muted"></div>
+    <pre id="sw-json" class="json"></pre>
+  </section>
+
+  <!-- G. Worker -->
+  <section class="card" id="sec-worker">
+    <h2>G. Worker (Python) trực tiếp</h2>
+    <div class="row">
+      <button id="w-health">/worker/health</button>
+      <span id="w-health-out" class="muted"></span>
+    </div>
+    <div class="row">
+      <input type="file" id="w-file" accept="image/*,audio/*,.bmp">
+      <span id="w-file-info" class="muted"></span>
+    </div>
+    <div class="row" id="w-audio-opts" hidden>
+      <label class="grow">segmentStartMs: <span id="w-start-label">0</span>
+        <input type="range" id="w-start" min="0" max="0" step="50" value="0"></label>
+    </div>
+    <div class="row">
+      <button id="w-run">Upload + xử lý</button>
+      <span id="w-state" class="muted"></span>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Phản hồi JSON</h3>
+        <pre id="w-json" class="json"></pre>
+      </div>
+      <div>
+        <h3>Xem trước</h3>
+        <div class="previews">
+          <figure><figcaption>alpha PNG + hull</figcaption><canvas id="w-canvas" width="300" height="300"></canvas></figure>
+          <figure><figcaption>SVG</figcaption><img id="w-svg" alt="" class="checker"></figure>
+          <figure id="w-audio-wrap" hidden><figcaption>audio segment</figcaption><audio id="w-audio-seg" controls></audio></figure>
+        </div>
+      </div>
+    </div>
+    <div id="w-wave" hidden>
+      <h3>WAVECODE</h3>
+      <div>levels (18): <div id="w-levels" class="bars"></div></div>
+      <div>bars: <div id="w-bars" class="bars"></div></div>
+      <div class="row">
+        <label>Candidate nudge <select id="w-nudge"></select></label>
+        <button id="w-render" class="secondary">Render wavecode</button>
+      </div>
+      <div class="previews">
+        <figure><figcaption>render PNG</figcaption><img id="w-render-png" alt="" class="checker"></figure>
+        <figure><figcaption>render SVG</figcaption><img id="w-render-svg" alt="" class="checker"></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- H. ESP32 -->
+  <section class="card" id="sec-serial">
+    <h2>H. ESP32-S3 qua USB (Web Serial)</h2>
+    <p class="hint">Frame <code>@MEMORA</code> qua Web Serial (Chrome / Edge). MQTT nằm ở thanh trên cùng và tab 1.</p>
+    <div class="row" id="usb-row">
+      <label>Baud
+        <select id="ser-baud"><option>921600</option><option>460800</option><option>230400</option><option>115200</option></select>
+      </label>
+      <button id="ser-connect">Kết nối</button>
+      <button id="ser-disconnect" class="secondary" disabled>Ngắt</button>
+      <label class="inline"><input type="checkbox" id="ser-autoping" checked> ping mỗi 5 s</label>
+      <span id="ser-state" class="muted">chưa kết nối</span>
+    </div>
+    <div class="row">
+      <label>d (deviceCode) <input id="ser-device" size="18"></label>
+      <label>sessionId <input id="ser-session" size="38"></label>
+      <label>attemptNo <input id="ser-attempt" type="number" min="1" max="3" value="1" style="width:4em"></label>
+    </div>
+    <div class="row">
+      <button class="ser-send" data-kind="ping">ping</button>
+      <button class="ser-send" data-kind="start">commands: start</button>
+      <button class="ser-send" data-kind="next">commands: next</button>
+      <label>end status
+        <select id="ser-end-status"><option>COMPLETED</option><option>CANCELLED</option><option>FAILED</option></select></label>
+      <button class="ser-send" data-kind="end">commands: end</button>
+    </div>
+    <div class="row">
+      <label>results
+        <select id="ser-res-result"><option>PENDING_REVIEW</option><option>REJECTED</option></select></label>
+      <label>suggestion
+        <select id="ser-res-sug"><option>PASS</option><option>LOW_QUALITY</option></select></label>
+      <button class="ser-send" data-kind="results">results (dùng nonce của attempts gần nhất)</button>
+    </div>
+    <div class="grid2">
+      <div>
+        <h3>Frame (@MEMORA)</h3>
+        <div id="ser-frames" class="frames"></div>
+      </div>
+      <div>
+        <h3>Log serial thô</h3>
+        <pre id="ser-raw" class="json"></pre>
+      </div>
+    </div>
+    <div id="ser-image" hidden>
+      <h3>Ảnh attempts gần nhất</h3>
+      <img id="ser-bmp" alt="" class="checker">
+      <button id="ser-to-worker" class="secondary">Xử lý ảnh này bằng worker (mục G)</button>
+    </div>
+  </section>
+  </div>
+  <section class="card" id="q3d-card">
+    <h2>Xem 3D: model tùy chọn + asset của item ở tab này</h2>
+    <div class="row">
+      <strong id="q3d-kind"></strong>
+      <label class="secondary">Model .glb từ máy (bỏ trống = model mặc định) <input id="q3d-glb" type="file" accept=".glb,model/gltf-binary"></label>
+      <label class="secondary">template.json (tùy chọn) <input id="q3d-tpl" type="file" accept=".json,application/json"></label>
+      <button id="q3d-show" type="button">Xem với asset đã chọn</button>
+      <span id="q3d-msg" class="muted"></span>
+    </div>
+    <div id="q3d"></div>
+  </section>
+</main>
+
+<footer>
+  <div class="row"><strong>Log</strong><button id="log-clear" class="secondary">Xóa</button></div>
+  <pre id="log"></pre>
+</footer>
+<script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script src="app.js"></script>
+<script src="ring3d.js"></script>
+<script src="fpdesign.js"></script>
+<script src="sim.js"></script>
+<script src="quick3d.js"></script>
+</body>
+</html>

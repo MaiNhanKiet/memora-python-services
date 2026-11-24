@@ -12,3 +12,6 @@ venv/
 dist/
 build/
 *.egg-info/
+
+# deploy secrets (keep only .gitkeep and *.env.example)
+deploy/secrets/*.env
